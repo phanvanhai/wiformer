@@ -1,0 +1,17 @@
+{
+    "dataset": "sshar_esp",
+    "model": "cnn_gru",
+    "accuracy": 0.975,
+    "precision_macro": 0.9753170289855073,
+    "recall_macro": 0.975,
+    "f1_macro": 0.9749829994703243,
+    "precision_weighted": 0.9753170289855072,
+    "recall_weighted": 0.975,
+    "f1_weighted": 0.9749829994703244,
+    "best_epoch": 184,
+    "train_size": 5120,
+    "test_size": 1280,
+    "training_time": 20712.096180438995,
+    "total_params": 1996424,
+    "trainable_params": 1996424
+}

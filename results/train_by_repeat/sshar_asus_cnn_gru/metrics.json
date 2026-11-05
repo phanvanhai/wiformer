@@ -1,0 +1,17 @@
+{
+    "dataset": "sshar_asus",
+    "model": "cnn_gru",
+    "accuracy": 0.97734375,
+    "precision_macro": 0.9774192837336224,
+    "recall_macro": 0.9773437500000001,
+    "f1_macro": 0.9773626968016418,
+    "precision_weighted": 0.9774192837336226,
+    "recall_weighted": 0.97734375,
+    "f1_weighted": 0.9773626968016419,
+    "best_epoch": 148,
+    "train_size": 5120,
+    "test_size": 1280,
+    "training_time": 26561.188669204712,
+    "total_params": 2025224,
+    "trainable_params": 2025224
+}

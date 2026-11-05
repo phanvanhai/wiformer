@@ -1,0 +1,17 @@
+{
+    "dataset": "sshar_esp",
+    "model": "bimamba",
+    "accuracy": 0.9578125,
+    "precision_macro": 0.958059540777068,
+    "recall_macro": 0.9578125,
+    "f1_macro": 0.957910936972026,
+    "precision_weighted": 0.958059540777068,
+    "recall_weighted": 0.9578125,
+    "f1_weighted": 0.957910936972026,
+    "best_epoch": 73,
+    "train_size": 5120,
+    "test_size": 1280,
+    "training_time": 3686.7089443206787,
+    "total_params": 652856,
+    "trainable_params": 652856
+}

@@ -1,0 +1,133 @@
+87.2s	210	WiFi HAR Benchmark
+87.2s	211	============================================================
+87.2s	212	Dataset : sshar_asus
+87.2s	213	Model   : bimamba
+87.2s	214	Device  : cuda
+87.2s	215	
+87.2s	216	Split case = 1
+466.4s	217	SSHAR mean = 2681.602539
+466.4s	218	SSHAR std  = 687.392151
+467.1s	219	Input Shape : (672, 250)
+467.1s	220	Classes     : 8
+467.1s	221	Train Size  : 5120
+467.1s	222	Test Size   : 1280
+467.1s	223	
+679.7s	224	[001/100] Train Loss: 1.7040  Train Acc: 0.3131  Test Loss: 1.7659  Test Acc: 0.3859
+786.2s	225	[002/100] Train Loss: 1.0827  Train Acc: 0.5043  Test Loss: 2.2701  Test Acc: 0.4141
+888.4s	226	[003/100] Train Loss: 0.8873  Train Acc: 0.5936  Test Loss: 1.8434  Test Acc: 0.4734
+990.8s	227	[004/100] Train Loss: 0.7558  Train Acc: 0.6512  Test Loss: 2.2804  Test Acc: 0.4531
+1092.5s	228	[005/100] Train Loss: 0.6953  Train Acc: 0.6920  Test Loss: 2.3530  Test Acc: 0.4992
+1193.4s	229	[006/100] Train Loss: 0.6000  Train Acc: 0.7404  Test Loss: 2.0433  Test Acc: 0.5375
+1294.8s	230	[007/100] Train Loss: 0.5429  Train Acc: 0.7715  Test Loss: 1.7467  Test Acc: 0.5563
+1395.6s	231	[008/100] Train Loss: 0.4974  Train Acc: 0.7980  Test Loss: 1.5607  Test Acc: 0.5500
+1496.0s	232	[009/100] Train Loss: 0.4880  Train Acc: 0.7986  Test Loss: 2.3091  Test Acc: 0.5008
+1596.9s	233	[010/100] Train Loss: 0.4480  Train Acc: 0.8131  Test Loss: 2.0281  Test Acc: 0.5352
+1696.6s	234	[011/100] Train Loss: 0.4381  Train Acc: 0.8193  Test Loss: 1.3773  Test Acc: 0.6016
+1795.9s	235	[012/100] Train Loss: 0.3835  Train Acc: 0.8434  Test Loss: 1.8797  Test Acc: 0.6109
+1895.7s	236	[013/100] Train Loss: 0.3785  Train Acc: 0.8463  Test Loss: 2.1231  Test Acc: 0.5312
+1995.6s	237	[014/100] Train Loss: 0.3332  Train Acc: 0.8656  Test Loss: 1.5946  Test Acc: 0.6320
+2096.3s	238	[015/100] Train Loss: 0.6951  Train Acc: 0.7361  Test Loss: 1.9929  Test Acc: 0.5930
+2196.3s	239	[016/100] Train Loss: 0.4044  Train Acc: 0.8354  Test Loss: 1.6808  Test Acc: 0.6492
+2299.5s	240	[017/100] Train Loss: 0.3930  Train Acc: 0.8391  Test Loss: 1.2572  Test Acc: 0.6297
+2403.5s	241	[018/100] Train Loss: 0.2952  Train Acc: 0.8869  Test Loss: 1.9470  Test Acc: 0.5938
+2504.5s	242	[019/100] Train Loss: 0.3015  Train Acc: 0.8844  Test Loss: 2.0753  Test Acc: 0.6289
+2606.9s	243	[020/100] Train Loss: 0.2919  Train Acc: 0.8820  Test Loss: 1.6493  Test Acc: 0.6195
+2709.9s	244	[021/100] Train Loss: 0.2866  Train Acc: 0.8855  Test Loss: 1.8621  Test Acc: 0.6195
+2812.3s	245	[022/100] Train Loss: 0.3002  Train Acc: 0.8834  Test Loss: 1.6290  Test Acc: 0.6047
+2913.8s	246	[023/100] Train Loss: 0.3046  Train Acc: 0.8795  Test Loss: 1.9291  Test Acc: 0.5734
+3015.1s	247	[024/100] Train Loss: 0.2630  Train Acc: 0.8951  Test Loss: 2.1320  Test Acc: 0.5773
+3116.5s	248	[025/100] Train Loss: 0.3801  Train Acc: 0.8564  Test Loss: 1.6467  Test Acc: 0.6102
+3218.0s	249	[026/100] Train Loss: 0.2741  Train Acc: 0.8930  Test Loss: 1.6084  Test Acc: 0.6188
+3319.4s	250	[027/100] Train Loss: 0.2420  Train Acc: 0.9053  Test Loss: 1.9043  Test Acc: 0.6117
+3421.6s	251	[028/100] Train Loss: 0.2310  Train Acc: 0.9086  Test Loss: 1.7152  Test Acc: 0.6250
+3525.3s	252	[029/100] Train Loss: 0.2444  Train Acc: 0.8994  Test Loss: 2.0084  Test Acc: 0.6031
+3627.4s	253	[030/100] Train Loss: 0.2468  Train Acc: 0.9010  Test Loss: 1.9919  Test Acc: 0.6023
+3728.2s	254	[031/100] Train Loss: 0.2437  Train Acc: 0.9023  Test Loss: 1.8284  Test Acc: 0.6125
+3832.5s	255	[032/100] Train Loss: 0.2690  Train Acc: 0.8930  Test Loss: 2.0838  Test Acc: 0.6219
+3934.9s	256	[033/100] Train Loss: 0.2523  Train Acc: 0.9000  Test Loss: 1.7194  Test Acc: 0.6227
+4036.2s	257	[034/100] Train Loss: 0.2558  Train Acc: 0.9006  Test Loss: 1.7624  Test Acc: 0.6273
+4140.1s	258	[035/100] Train Loss: 0.2491  Train Acc: 0.9014  Test Loss: 2.0744  Test Acc: 0.6000
+4248.8s	259	[036/100] Train Loss: 0.2680  Train Acc: 0.8902  Test Loss: 1.2212  Test Acc: 0.6891
+4432.8s	260	[037/100] Train Loss: 0.2431  Train Acc: 0.9023  Test Loss: 1.8246  Test Acc: 0.6125
+4556.2s	261	[038/100] Train Loss: 0.2604  Train Acc: 0.8967  Test Loss: 1.4531  Test Acc: 0.6508
+4669.8s	262	[039/100] Train Loss: 0.2434  Train Acc: 0.9039  Test Loss: 1.1828  Test Acc: 0.6828
+4783.1s	263	[040/100] Train Loss: 0.2470  Train Acc: 0.8994  Test Loss: 1.5382  Test Acc: 0.6289
+4894.8s	264	[041/100] Train Loss: 0.2466  Train Acc: 0.9064  Test Loss: 1.5698  Test Acc: 0.6492
+5007.1s	265	[042/100] Train Loss: 0.2544  Train Acc: 0.8986  Test Loss: 1.4062  Test Acc: 0.6609
+5120.9s	266	[043/100] Train Loss: 0.2268  Train Acc: 0.9074  Test Loss: 1.8278  Test Acc: 0.6305
+5244.2s	267	[044/100] Train Loss: 0.2195  Train Acc: 0.9137  Test Loss: 1.8430  Test Acc: 0.6336
+5359.0s	268	[045/100] Train Loss: 0.2266  Train Acc: 0.9094  Test Loss: 1.5847  Test Acc: 0.6602
+5472.2s	269	[046/100] Train Loss: 0.2449  Train Acc: 0.9021  Test Loss: 2.2505  Test Acc: 0.6266
+5584.2s	270	[047/100] Train Loss: 0.2923  Train Acc: 0.8859  Test Loss: 1.9324  Test Acc: 0.5805
+5696.9s	271	[048/100] Train Loss: 0.2908  Train Acc: 0.8859  Test Loss: 1.3930  Test Acc: 0.6813
+5809.3s	272	[049/100] Train Loss: 0.2361  Train Acc: 0.9047  Test Loss: 1.7096  Test Acc: 0.6492
+5920.5s	273	[050/100] Train Loss: 0.2398  Train Acc: 0.9014  Test Loss: 1.5949  Test Acc: 0.6594
+6043.4s	274	[051/100] Train Loss: 0.2659  Train Acc: 0.8959  Test Loss: 1.9656  Test Acc: 0.6539
+6189.9s	275	[052/100] Train Loss: 0.2215  Train Acc: 0.9090  Test Loss: 1.7790  Test Acc: 0.6312
+6303.2s	276	[053/100] Train Loss: 0.2190  Train Acc: 0.9084  Test Loss: 2.0805  Test Acc: 0.6234
+6415.6s	277	[054/100] Train Loss: 0.2136  Train Acc: 0.9121  Test Loss: 1.8663  Test Acc: 0.6383
+6527.6s	278	[055/100] Train Loss: 0.2150  Train Acc: 0.9111  Test Loss: 1.6569  Test Acc: 0.6656
+6640.1s	279	[056/100] Train Loss: 0.2470  Train Acc: 0.9006  Test Loss: 1.8254  Test Acc: 0.6172
+6752.0s	280	[057/100] Train Loss: 0.2908  Train Acc: 0.8852  Test Loss: 1.4954  Test Acc: 0.6203
+6865.1s	281	[058/100] Train Loss: 0.2879  Train Acc: 0.8865  Test Loss: 1.5805  Test Acc: 0.6453
+6978.0s	282	[059/100] Train Loss: 0.2374  Train Acc: 0.9035  Test Loss: 1.9988  Test Acc: 0.6312
+7090.4s	283	[060/100] Train Loss: 0.2262  Train Acc: 0.9078  Test Loss: 1.8656  Test Acc: 0.6359
+7203.5s	284	[061/100] Train Loss: 0.2329  Train Acc: 0.9061  Test Loss: 2.0054  Test Acc: 0.6359
+7317.8s	285	[062/100] Train Loss: 0.2012  Train Acc: 0.9170  Test Loss: 2.0807  Test Acc: 0.6516
+7432.3s	286	[063/100] Train Loss: 0.2155  Train Acc: 0.9094  Test Loss: 2.0702  Test Acc: 0.6594
+7545.5s	287	[064/100] Train Loss: 0.2238  Train Acc: 0.9094  Test Loss: 2.0845  Test Acc: 0.6570
+7657.5s	288	[065/100] Train Loss: 0.2094  Train Acc: 0.9125  Test Loss: 2.0352  Test Acc: 0.6602
+7770.0s	289	[066/100] Train Loss: 0.2109  Train Acc: 0.9127  Test Loss: 2.0329  Test Acc: 0.6617
+7883.1s	290	[067/100] Train Loss: 0.2191  Train Acc: 0.9084  Test Loss: 2.0265  Test Acc: 0.6602
+7995.4s	291	[068/100] Train Loss: 0.2138  Train Acc: 0.9131  Test Loss: 2.0322  Test Acc: 0.6625
+8107.6s	292	[069/100] Train Loss: 0.2177  Train Acc: 0.9076  Test Loss: 2.0473  Test Acc: 0.6617
+8220.1s	293	[070/100] Train Loss: 0.2252  Train Acc: 0.9068  Test Loss: 2.0378  Test Acc: 0.6609
+8332.2s	294	[071/100] Train Loss: 0.2171  Train Acc: 0.9119  Test Loss: 2.0002  Test Acc: 0.6617
+8444.2s	295	[072/100] Train Loss: 0.1977  Train Acc: 0.9199  Test Loss: 1.9847  Test Acc: 0.6594
+8556.3s	296	[073/100] Train Loss: 0.1947  Train Acc: 0.9203  Test Loss: 2.0005  Test Acc: 0.6586
+8669.1s	297	[074/100] Train Loss: 0.2122  Train Acc: 0.9129  Test Loss: 1.9723  Test Acc: 0.6594
+8781.3s	298	[075/100] Train Loss: 0.2023  Train Acc: 0.9145  Test Loss: 1.9272  Test Acc: 0.6625
+8894.2s	299	[076/100] Train Loss: 0.1966  Train Acc: 0.9191  Test Loss: 1.9118  Test Acc: 0.6602
+9007.0s	300	[077/100] Train Loss: 0.2124  Train Acc: 0.9111  Test Loss: 1.9063  Test Acc: 0.6648
+9119.7s	301	[078/100] Train Loss: 0.2068  Train Acc: 0.9141  Test Loss: 1.8754  Test Acc: 0.6633
+9233.9s	302	[079/100] Train Loss: 0.1977  Train Acc: 0.9170  Test Loss: 1.8788  Test Acc: 0.6672
+9347.7s	303	[080/100] Train Loss: 0.1944  Train Acc: 0.9191  Test Loss: 1.8848  Test Acc: 0.6617
+9460.8s	304	[081/100] Train Loss: 0.2284  Train Acc: 0.9047  Test Loss: 1.8889  Test Acc: 0.6547
+9574.8s	305	[082/100] Train Loss: 0.2248  Train Acc: 0.9070  Test Loss: 1.8603  Test Acc: 0.6594
+9687.4s	306	[083/100] Train Loss: 0.2140  Train Acc: 0.9105  Test Loss: 1.8205  Test Acc: 0.6680
+9799.9s	307	[084/100] Train Loss: 0.1953  Train Acc: 0.9184  Test Loss: 1.8396  Test Acc: 0.6656
+9912.2s	308	[085/100] Train Loss: 0.2017  Train Acc: 0.9176  Test Loss: 1.8754  Test Acc: 0.6562
+10024.4s	309	[086/100] Train Loss: 0.2286  Train Acc: 0.9023  Test Loss: 1.8448  Test Acc: 0.6633
+10138.5s	310	[087/100] Train Loss: 0.1986  Train Acc: 0.9158  Test Loss: 1.8133  Test Acc: 0.6687
+10251.2s	311	[088/100] Train Loss: 0.2148  Train Acc: 0.9119  Test Loss: 1.8460  Test Acc: 0.6633
+10363.3s	312	[089/100] Train Loss: 0.2036  Train Acc: 0.9156  Test Loss: 1.7726  Test Acc: 0.6633
+10475.3s	313	[090/100] Train Loss: 0.2189  Train Acc: 0.9102  Test Loss: 1.7660  Test Acc: 0.6602
+10588.0s	314	[091/100] Train Loss: 0.2248  Train Acc: 0.9078  Test Loss: 1.7163  Test Acc: 0.6664
+10701.7s	315	[092/100] Train Loss: 0.2075  Train Acc: 0.9133  Test Loss: 1.7512  Test Acc: 0.6609
+10815.1s	316	[093/100] Train Loss: 0.1960  Train Acc: 0.9189  Test Loss: 1.8026  Test Acc: 0.6578
+10927.7s	317	[094/100] Train Loss: 0.2112  Train Acc: 0.9100  Test Loss: 1.7274  Test Acc: 0.6656
+11040.5s	318	[095/100] Train Loss: 0.2104  Train Acc: 0.9129  Test Loss: 1.6943  Test Acc: 0.6664
+11153.9s	319	[096/100] Train Loss: 0.2065  Train Acc: 0.9131  Test Loss: 1.7675  Test Acc: 0.6539
+11267.2s	320	[097/100] Train Loss: 0.2156  Train Acc: 0.9100  Test Loss: 1.7743  Test Acc: 0.6594
+11380.4s	321	[098/100] Train Loss: 0.5751  Train Acc: 0.7730  Test Loss: 1.4092  Test Acc: 0.6125
+11493.3s	322	[099/100] Train Loss: 0.3918  Train Acc: 0.8467  Test Loss: 1.3284  Test Acc: 0.6562
+11607.7s	323	[100/100] Train Loss: 0.3068  Train Acc: 0.8740  Test Loss: 1.5573  Test Acc: 0.6711
+11607.7s	324	
+11607.7s	325	Training Finished
+11607.7s	326	Best Epoch : 36
+11607.7s	327	Best Acc   : 0.6891
+11607.7s	328	Time       : 11140.3 sec
+11627.9s	329	
+11627.9s	330	============================================================
+11627.9s	331	Evaluation Result
+11627.9s	332	============================================================
+11627.9s	333	Accuracy          : 0.6891
+11627.9s	334	Macro Precision   : 0.6881
+11627.9s	335	Macro Recall      : 0.6891
+11627.9s	336	Macro F1-score    : 0.6807
+11627.9s	337	============================================================
+11627.9s	338	
+11627.9s	339	============================================================
+11627.9s	340	Finished
+11627.9s	341	Result Folder
+11627.9s	342	results/sshar_asus_bimamba

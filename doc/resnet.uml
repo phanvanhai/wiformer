@@ -1,0 +1,59 @@
+@startuml
+!theme plain
+
+top to bottom direction
+
+skinparam rectangle {
+    BackgroundColor PaleTurquoise
+    BorderColor Teal
+    RoundCorner 10
+    Shadowing false
+}
+
+skinparam arrow {
+    Color DarkSlateGray
+    Thickness 2
+}
+
+skinparam ranksep 10
+skinparam nodesep 5
+
+skinparam package {
+    BackgroundColor Transparent
+    BorderColor Transparent
+}
+
+title ResNet18-1D
+
+package {
+    rectangle "Input\n(B, Dev x Anten x Sub_1anten, Time)" as Input
+    
+    rectangle "Initial Convolution" as InitBlock #LightYellow {
+        rectangle "Conv1d (cout=128, k=7, s=2, p=3)➔ BN1d ➔ ReLU" as InitConv1
+        rectangle "MaxPool1d (k=3, s=2, p=1)" as InitPool
+    }
+
+    rectangle "Layer 1 (Residual Block)\n[Channels: 128, Stride: 1]" as Layer1 #Orange
+    rectangle "Layer 2 (Residual Block)\n[Channels: 128, Stride: 2]" as Layer2 #Orange
+    rectangle "Layer 3 (Residual Block)\n[Channels: 256, Stride: 2]" as Layer3 #Orange
+    rectangle "Layer 4 (Residual Block)\n[Channels: 512, Stride: 2]" as Layer4 #Orange
+
+    rectangle "AdaptiveAvgPool1d (1)" as GAP
+    rectangle "Flatten / View" as Flatten
+    rectangle "Linear" as FC
+    rectangle "Output Labels" as Output
+}
+
+' --- DATA FLOW ---
+Input --> InitConv1
+InitConv1 --> InitPool
+InitPool --> Layer1
+Layer1 --> Layer2
+Layer2 --> Layer3
+Layer3 --> Layer4
+Layer4 --> GAP
+GAP --> Flatten
+Flatten --> FC
+FC --> Output
+
+@enduml

@@ -1,0 +1,17 @@
+{
+    "dataset": "xrf55",
+    "model": "cnn_gru",
+    "accuracy": 0.98125,
+    "precision_macro": 0.9817708395884626,
+    "recall_macro": 0.98125,
+    "f1_macro": 0.9811480252613805,
+    "precision_weighted": 0.9817708395884625,
+    "recall_weighted": 0.98125,
+    "f1_weighted": 0.9811480252613805,
+    "best_epoch": 88,
+    "train_size": 3840,
+    "test_size": 960,
+    "training_time": 4952.195397615433,
+    "total_params": 1327496,
+    "trainable_params": 1327496
+}

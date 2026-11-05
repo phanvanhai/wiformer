@@ -1,0 +1,17 @@
+{
+    "dataset": "sshar_asus",
+    "model": "bimamba",
+    "accuracy": 0.60859375,
+    "precision_macro": 0.620026461253707,
+    "recall_macro": 0.60859375,
+    "f1_macro": 0.6014120253001114,
+    "precision_weighted": 0.620026461253707,
+    "recall_weighted": 0.60859375,
+    "f1_weighted": 0.6014120253001115,
+    "best_epoch": 44,
+    "train_size": 5120,
+    "test_size": 1280,
+    "training_time": 10232.613233327866,
+    "total_params": 8535752,
+    "trainable_params": 8535752
+}

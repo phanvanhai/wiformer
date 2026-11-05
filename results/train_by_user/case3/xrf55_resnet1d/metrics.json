@@ -1,0 +1,17 @@
+{
+    "dataset": "xrf55",
+    "model": "resnet1d",
+    "accuracy": 0.44375,
+    "precision_macro": 0.4627791891036711,
+    "recall_macro": 0.44375,
+    "f1_macro": 0.4337669555463961,
+    "precision_weighted": 0.46277918910367105,
+    "recall_weighted": 0.44375,
+    "f1_weighted": 0.4337669555463961,
+    "best_epoch": 76,
+    "train_size": 3840,
+    "test_size": 960,
+    "training_time": 1882.8355507850647,
+    "total_params": 5286664,
+    "trainable_params": 5286664
+}

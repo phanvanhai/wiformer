@@ -1,0 +1,17 @@
+{
+    "dataset": "xrf55",
+    "model": "bimamba",
+    "accuracy": 0.42916666666666664,
+    "precision_macro": 0.4519144953472442,
+    "recall_macro": 0.4291666666666667,
+    "f1_macro": 0.4303205598646853,
+    "precision_weighted": 0.45191449534724426,
+    "recall_weighted": 0.42916666666666664,
+    "f1_weighted": 0.43032055986468526,
+    "best_epoch": 55,
+    "train_size": 3840,
+    "test_size": 960,
+    "training_time": 3264.5615000724792,
+    "total_params": 1543868,
+    "trainable_params": 1543868
+}

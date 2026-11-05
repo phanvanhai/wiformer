@@ -1,0 +1,17 @@
+{
+    "dataset": "sshar_esp",
+    "model": "resnet1d",
+    "accuracy": 0.8703125,
+    "precision_macro": 0.8730588242971951,
+    "recall_macro": 0.8703125,
+    "f1_macro": 0.8649470999002362,
+    "precision_weighted": 0.873058824297195,
+    "recall_weighted": 0.8703125,
+    "f1_weighted": 0.8649470999002362,
+    "best_epoch": 84,
+    "train_size": 5120,
+    "test_size": 1280,
+    "training_time": 3126.0685811042786,
+    "total_params": 5195272,
+    "trainable_params": 5195272
+}

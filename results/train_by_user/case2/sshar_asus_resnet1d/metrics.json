@@ -1,0 +1,17 @@
+{
+    "dataset": "sshar_asus",
+    "model": "resnet1d",
+    "accuracy": 0.609375,
+    "precision_macro": 0.6832482731145517,
+    "recall_macro": 0.609375,
+    "f1_macro": 0.6105404944604167,
+    "precision_weighted": 0.6832482731145518,
+    "recall_weighted": 0.609375,
+    "f1_weighted": 0.6105404944604167,
+    "best_epoch": 16,
+    "train_size": 5120,
+    "test_size": 1280,
+    "training_time": 6237.193471670151,
+    "total_params": 5646856,
+    "trainable_params": 5646856
+}

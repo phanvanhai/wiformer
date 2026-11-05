@@ -1,0 +1,62 @@
+@startuml
+!theme plain
+
+top to bottom direction
+
+skinparam rectangle {
+    BackgroundColor PaleTurquoise
+    BorderColor Teal
+    RoundCorner 10
+    Shadowing false
+}
+
+skinparam arrow {
+    Color DarkSlateGray
+    Thickness 2
+}
+
+skinparam ranksep 10
+skinparam nodesep 5
+
+skinparam package {
+    BackgroundColor Transparent
+    BorderColor Transparent
+}
+
+title CNN-GRU Architecture
+
+package {
+    rectangle "Input\n(B, Dev x Anten, Sub_1anten, Time)" as Input
+    
+    rectangle "Conv Block 1" as ConvBlock1 #LightYellow {
+        rectangle "Conv2d (cout=128, k=5, s=1, p='same')➔ BN2d ➔ ReLU" as Conv1
+        rectangle "AvgPool2d (k=2, s=2)" as Pool1
+        rectangle "Dropout (0.6)" as Dropout1
+    }
+
+    rectangle "Conv Block 2" as ConvBlock2 #LightYellow {
+        rectangle "Conv2d (cout=128, k=5, s=1, p='same')➔ BN2d ➔ ReLU" as Conv2
+        rectangle "AvgPool2d (k=2, s=2)" as Pool2
+    }
+
+    rectangle "Flatten" as Flatten
+
+    rectangle "GRU Layer\nhidden_size=256" as GRUBlock
+
+    rectangle "Linear" as FC
+
+    rectangle "Output Labels" as Output
+}
+
+' --- DATA FLOW ---
+Input --> Conv1
+Conv1 --> Pool1
+Pool1 --> Dropout1
+Dropout1 --> Conv2
+Conv2 --> Pool2
+Pool2 --> Flatten
+Flatten --> GRUBlock
+GRUBlock --> FC
+FC --> Output
+
+@enduml
