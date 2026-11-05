@@ -112,13 +112,37 @@ def parse_args():
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=64,
+        default=None,
+        help="Default: per-model (wiformer=32, others=64)",
     )
 
     parser.add_argument(
         "--lr",
         type=float,
-        default=1e-3,
+        default=None,
+        help="Default: per-model (wiformer=1e-4, others=1e-3)",
+    )
+
+    parser.add_argument(
+        "--optimizer",
+        type=str,
+        default=None,
+        choices=["adam", "adamw"],
+        help="Default: per-model (wiformer=adamw, others=adam)",
+    )
+
+    parser.add_argument(
+        "--weight_decay",
+        type=float,
+        default=None,
+        help="Default: per-model (wiformer=0.01, others=0)",
+    )
+
+    parser.add_argument(
+        "--warmup_epochs",
+        type=int,
+        default=None,
+        help="Linear warmup epochs before the scheduler (wiformer=5)",
     )
 
     parser.add_argument(
@@ -160,8 +184,8 @@ def parse_args():
     parser.add_argument(
         "--scheduler-t-max",
         type=int,
-        default=50,
-        help="T_max for CosineAnnealingLR",
+        default=None,
+        help="T_max for CosineAnnealingLR (default: epochs - warmup)",
     )
 
     parser.add_argument(
@@ -217,6 +241,20 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--k2_layers",
+        type=int,
+        default=2,
+        help="WiFormer: number of layers in Block 2 (Rx x Sub attention)",
+    )
+
+    parser.add_argument(
+        "--k3_layers",
+        type=int,
+        default=4,
+        help="WiFormer: number of layers in Block 3 (temporal Transformer)",
+    )
+
+    parser.add_argument(
             "--case_split",
             type=int,
             default=0,
@@ -227,8 +265,35 @@ def parse_args():
     return parser.parse_args()
 
 
-def get_default_scheduler_cfg(model_name):
+def get_default_train_cfg(model_name):
+    """Per-model defaults for lr / batch size / optimizer."""
     model_name = model_name.lower()
+    if model_name == "wiformer":
+        return {
+            "lr": 1e-4,
+            "batch_size": 32,
+            "optimizer": "adamw",
+            "weight_decay": 0.01,
+            "warmup_epochs": 5,
+        }
+    return {
+        "lr": 1e-3,
+        "batch_size": 64,
+        "optimizer": "adam",
+        "weight_decay": 0.0,
+        "warmup_epochs": 0,
+    }
+
+
+def get_default_scheduler_cfg(model_name, epochs=100, warmup_epochs=0):
+    model_name = model_name.lower()
+    if model_name == "wiformer":
+        return {
+            "name": "cosineannealinglr",
+            "args": {
+                "t_max": max(1, epochs - warmup_epochs),
+            },
+        }
     if model_name == "resnet1d":
         return {
             "name": "multisteplr",
@@ -254,6 +319,10 @@ def get_default_scheduler_cfg(model_name):
 
 def main():
     args = parse_args()
+    train_defaults = get_default_train_cfg(args.model)
+    for key, value in train_defaults.items():
+        if getattr(args, key) is None:
+            setattr(args, key, value)
     # --------------------------------------------------------
     # Reproducibility
     # --------------------------------------------------------
@@ -312,15 +381,25 @@ def main():
     # --------------------------------------------------------
     # Build model
     # --------------------------------------------------------
+    model_kwargs = {}
+    if args.model == "wiformer":
+        model_kwargs.update(
+            k2_layers=args.k2_layers,
+            k3_layers=args.k3_layers,
+        )
+
     model = get_model(
         model_name=args.model,
         input_shape=input_shape,
         num_classes=num_classes,
         dataset=args.dataset,
+        **model_kwargs,
     )
     model = model.to(device)
 
-    scheduler_cfg = get_default_scheduler_cfg(args.model)
+    scheduler_cfg = get_default_scheduler_cfg(
+        args.model, args.epochs, args.warmup_epochs
+    )
     if args.scheduler and args.scheduler.lower() != "none":
         scheduler_cfg = {
             "name": args.scheduler,
@@ -328,7 +407,11 @@ def main():
                 "step_size": args.scheduler_step_size,
                 "gamma": args.scheduler_gamma,
                 "milestones": args.scheduler_milestones,
-                "t_max": args.scheduler_t_max,
+                "t_max": (
+                    args.scheduler_t_max
+                    if args.scheduler_t_max is not None
+                    else max(1, args.epochs - args.warmup_epochs)
+                ),
                 "eta_min": args.scheduler_eta_min,
                 "patience": args.scheduler_patience,
                 "threshold": args.scheduler_threshold,
@@ -337,6 +420,19 @@ def main():
                 "total_steps": args.scheduler_total_steps,
             },
         }
+
+    if scheduler_cfg is not None:
+        scheduler_cfg["warmup_epochs"] = args.warmup_epochs
+    optimizer_cfg = {
+        "name": args.optimizer,
+        "weight_decay": args.weight_decay,
+    }
+    print(
+        f"Optimizer : {args.optimizer} (lr={args.lr}, wd={args.weight_decay})  "
+        f"Batch: {args.batch_size}  "
+        f"Scheduler: {scheduler_cfg['name'] if scheduler_cfg else 'none'} "
+        f"(warmup={args.warmup_epochs})"
+    )
 
     # --------------------------------------------------------
     # Result folder
@@ -407,6 +503,7 @@ def main():
         device=device,
         save_dir=save_dir,
         scheduler_cfg=scheduler_cfg,
+        optimizer_cfg=optimizer_cfg,
     )
     training_time = time.time() - start_time
     # --------------------------------------------------------

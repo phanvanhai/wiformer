@@ -1,5 +1,5 @@
 """
-CSI-WiFormer (v4)
+CSI-WiFormer (v5) - see WiFormer_Architecture.md
 
 Input (from datasets.py)
 ------------------------
@@ -11,17 +11,17 @@ Pipeline
 --------
 select antenna[0]  -> (B, N_rx, N_sub, T)
 per-sample z-score -> (B, N_rx, N_sub, T)
-Block 1 : unfold(W, S) + shared Conv1d stack -> (B, N_rx, N_sub, n_win, D)
-Block 2 : joint (Rx x Sub) attention per window + CLS -> (B, n_win, D)
+Block 1 : unfold(W, S) + shared Conv1d stack -> (B, N_rx, n_win, N_sub, D)
+Block 2 : joint (Rx x Sub) attention per window, PE_sub only, CLS -> (B, n_win, D)
 Block 3 : CLS + ALiBi temporal Transformer -> (B, D)
 Classifier : LayerNorm -> Dropout -> Linear -> logits
+             (Softmax is applied inside CrossEntropyLoss / at inference)
 """
 
 import math
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from .base import BaseModel
 
@@ -42,24 +42,36 @@ WIFORMER_DATASET_CFG = {
 }
 
 
+def make_encoder_layer(d_model, n_heads, dim_ff, dropout, activation, norm_first):
+    return nn.TransformerEncoderLayer(
+        d_model=d_model,
+        nhead=n_heads,
+        dim_feedforward=dim_ff,
+        dropout=dropout,
+        activation=activation,
+        batch_first=True,
+        norm_first=norm_first,
+    )
+
+
 # ============================================================
 # Block 1 - Sub feature extractor
 # ============================================================
 class SubFeatureExtractor(nn.Module):
-    """Shared Conv1d stack applied to every (rx, sub, window) of length W."""
+    """Shared Conv1d stack applied to every (rx, window, sub) of length W."""
 
     def __init__(self, d_model=64, feat=64, window=64, stride=32):
         super().__init__()
         self.window = window
         self.stride = stride
         self.encoder = nn.Sequential(
-            nn.Conv1d(1, 32, kernel_size=8, stride=2, padding=3),     # W -> W/2
+            nn.Conv1d(1, 32, kernel_size=8, stride=2, padding=3),     # 64 -> 32
             nn.BatchNorm1d(32),
             nn.GELU(),
-            nn.Conv1d(32, feat, kernel_size=4, stride=2, padding=1),  # W/2 -> W/4
+            nn.Conv1d(32, feat, kernel_size=4, stride=2, padding=1),  # 32 -> 16
             nn.BatchNorm1d(feat),
             nn.GELU(),
-            nn.AdaptiveAvgPool1d(1),
+            nn.AdaptiveAvgPool1d(1),                                  # 16 -> 1
         )
         self.proj = nn.Linear(feat, d_model)
 
@@ -69,73 +81,59 @@ class SubFeatureExtractor(nn.Module):
         x = x.unfold(dimension=-1, size=self.window, step=self.stride)
         # (B, R, S, n_win, W)
         n_win = x.shape[3]
-        x = x.reshape(B * R * S * n_win, 1, self.window)
-        x = self.encoder(x).squeeze(-1)          # (B*R*S*n_win, F)
-        x = self.proj(x)                         # (B*R*S*n_win, D)
-        return x.reshape(B, R, S, n_win, -1)     # (B, R, S, n_win, D)
+        x = x.permute(0, 1, 3, 2, 4)                       # (B, R, n_win, S, W)
+        x = x.reshape(B * R * n_win * S, 1, self.window)
+        x = self.encoder(x).squeeze(-1)                    # (*, F)
+        x = self.proj(x)                                   # (*, D)
+        return x.reshape(B, R, n_win, S, -1)               # (B, R, n_win, S, D)
 
 
 # ============================================================
-# Block 2 - Joint (Rx x Sub) attention per window
+# Block 2 - Joint (Rx x Sub) attention per window (PE_sub only)
 # ============================================================
 class JointRxSubAttention(nn.Module):
     def __init__(
         self,
-        n_rx,
         n_sub,
         d_model=64,
         n_heads=4,
-        dim_ff=128,
+        n_layers=1,
+        dim_ff=256,
         dropout=0.1,
+        activation="gelu",
+        norm_first=True,
     ):
         super().__init__()
-        assert d_model % 2 == 0, "d_model must be even (PE concat D/2 + D/2)"
-        self.n_rx = n_rx
+        assert d_model % 2 == 0
         self.n_sub = n_sub
 
-        # Factorized PE: concat(PE_rx, PE_sub) -> Linear(D, D)
-        self.embed_rx = nn.Embedding(n_rx, d_model // 2)
+        # PE_sub: Embedding(N_sub, D/2) -> Linear(D/2, D). No PE_rx.
         self.embed_sub = nn.Embedding(n_sub, d_model // 2)
-        self.pe_proj = nn.Linear(d_model, d_model)
+        self.pe_proj = nn.Linear(d_model // 2, d_model)
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
-        self.attn_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=n_heads,
-            dim_feedforward=dim_ff,
-            dropout=dropout,
-            activation="gelu",
-            batch_first=True,
-            norm_first=True,
+        self.attn_layer = nn.TransformerEncoder(
+            make_encoder_layer(
+                d_model, n_heads, dim_ff, dropout, activation, norm_first
+            ),
+            num_layers=n_layers,
+            enable_nested_tensor=False,
         )
 
-        nn.init.trunc_normal_(self.cls_token, std=0.02)
-        nn.init.trunc_normal_(self.embed_rx.weight, std=0.02)
-        nn.init.trunc_normal_(self.embed_sub.weight, std=0.02)
-
-    def positional_encoding(self):
-        device = self.embed_rx.weight.device
-        pe_rx = self.embed_rx(torch.arange(self.n_rx, device=device))     # (R, D/2)
-        pe_sub = self.embed_sub(torch.arange(self.n_sub, device=device))  # (S, D/2)
-        pe = torch.cat(
-            [
-                pe_rx.unsqueeze(1).expand(-1, self.n_sub, -1),   # (R, S, D/2)
-                pe_sub.unsqueeze(0).expand(self.n_rx, -1, -1),   # (R, S, D/2)
-            ],
-            dim=-1,
-        ).reshape(self.n_rx * self.n_sub, -1)                    # (R*S, D)
-        return self.pe_proj(pe)
-
     def forward(self, x):
-        # x: (B, R, S, n_win, D)
-        B, R, S, n_win, D = x.shape
-        x = x.permute(0, 3, 1, 2, 4).reshape(B * n_win, R * S, D)
-        x = x + self.positional_encoding().unsqueeze(0)
+        # x: (B, R, n_win, S, D)
+        B, R, n_win, S, D = x.shape
+        x = x.permute(0, 2, 1, 3, 4).reshape(B * n_win, R * S, D)
+
+        sub_idx = torch.arange(S, device=x.device)
+        pe = self.pe_proj(self.embed_sub(sub_idx))          # (S, D)
+        pe = pe.unsqueeze(0).expand(R, -1, -1).reshape(R * S, D)
+        x = x + pe.unsqueeze(0)                             # broadcast B*n_win
 
         cls = self.cls_token.expand(B * n_win, -1, -1)
-        x = torch.cat([cls, x], dim=1)           # (B*n_win, 1+R*S, D)
+        x = torch.cat([cls, x], dim=1)                      # (B*n_win, 1+R*S, D)
         x = self.attn_layer(x)
-        return x[:, 0].reshape(B, n_win, D)      # (B, n_win, D)
+        return x[:, 0].reshape(B, n_win, D)                 # (B, n_win, D)
 
 
 # ============================================================
@@ -143,50 +141,6 @@ class JointRxSubAttention(nn.Module):
 # ============================================================
 def get_alibi_slopes(n_heads):
     return 2 ** (-8 / n_heads * torch.arange(1, n_heads + 1, dtype=torch.float32))
-
-
-class ALiBiEncoderLayer(nn.Module):
-    """Pre-LN Transformer encoder layer with an additive attention bias."""
-
-    def __init__(self, d_model=64, n_heads=4, dim_ff=256, dropout=0.1):
-        super().__init__()
-        assert d_model % n_heads == 0
-        self.n_heads = n_heads
-        self.head_dim = d_model // n_heads
-        self.dropout_p = dropout
-
-        self.norm1 = nn.LayerNorm(d_model)
-        self.qkv = nn.Linear(d_model, 3 * d_model)
-        self.out_proj = nn.Linear(d_model, d_model)
-        self.drop1 = nn.Dropout(dropout)
-
-        self.norm2 = nn.LayerNorm(d_model)
-        self.ffn = nn.Sequential(
-            nn.Linear(d_model, dim_ff),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(dim_ff, d_model),
-        )
-        self.drop2 = nn.Dropout(dropout)
-
-    def forward(self, x, attn_bias):
-        # x: (B, L, D) ; attn_bias: (1, H, L, L)
-        B, L, D = x.shape
-        h = self.norm1(x)
-        q, k, v = (
-            self.qkv(h)
-            .reshape(B, L, 3, self.n_heads, self.head_dim)
-            .permute(2, 0, 3, 1, 4)
-        )                                        # each (B, H, L, hd)
-        attn = F.scaled_dot_product_attention(
-            q, k, v,
-            attn_mask=attn_bias.to(q.dtype),
-            dropout_p=self.dropout_p if self.training else 0.0,
-        )                                        # (B, H, L, hd)
-        attn = attn.transpose(1, 2).reshape(B, L, D)
-        x = x + self.drop1(self.out_proj(attn))
-        x = x + self.drop2(self.ffn(self.norm2(x)))
-        return x
 
 
 class TemporalTransformer(nn.Module):
@@ -197,39 +151,42 @@ class TemporalTransformer(nn.Module):
         n_layers=2,
         dim_ff=256,
         dropout=0.1,
+        activation="gelu",
+        norm_first=True,
     ):
         super().__init__()
         self.n_heads = n_heads
         self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
-        self.layers = nn.ModuleList(
-            [
-                ALiBiEncoderLayer(d_model, n_heads, dim_ff, dropout)
-                for _ in range(n_layers)
-            ]
+        self.encoder = nn.TransformerEncoder(
+            make_encoder_layer(
+                d_model, n_heads, dim_ff, dropout, activation, norm_first
+            ),
+            num_layers=n_layers,
+            enable_nested_tensor=False,
         )
         self.register_buffer(
             "alibi_slopes", get_alibi_slopes(n_heads), persistent=False
         )
-        nn.init.trunc_normal_(self.cls_token, std=0.02)
 
-    def build_alibi_bias(self, n_win, device):
-        # bias(i, j) = -m_h * |i - j| between window tokens.
-        # CLS (index 0) has no positional bias -> attends/is attended uniformly.
-        pos = torch.arange(n_win, device=device)
-        dist = (pos[None, :] - pos[:, None]).abs().float()        # (n_win, n_win)
-        bias = torch.zeros(self.n_heads, n_win + 1, n_win + 1, device=device)
-        bias[:, 1:, 1:] = -self.alibi_slopes.to(device)[:, None, None] * dist
-        return bias.unsqueeze(0)                                  # (1, H, L, L)
+    def build_alibi_bias(self, seq_len, device, dtype):
+        # alibi[h, i, j] = -m_h * |i - j| over all seq_len = n_win + 1 tokens
+        pos = torch.arange(seq_len, device=device)
+        dist = (pos.unsqueeze(0) - pos.unsqueeze(1)).abs().to(dtype)
+        return -self.alibi_slopes.to(device, dtype).view(-1, 1, 1) * dist.unsqueeze(0)
 
     def forward(self, x):
         # x: (B, n_win, D)
-        B, n_win, _ = x.shape
+        B = x.shape[0]
         cls = self.cls_token.expand(B, -1, -1)
-        x = torch.cat([cls, x], dim=1)           # (B, 1+n_win, D)
-        bias = self.build_alibi_bias(n_win, x.device)
-        for layer in self.layers:
-            x = layer(x, bias)
-        return x[:, 0]                           # (B, D)
+        x = torch.cat([cls, x], dim=1)                      # (B, 1+n_win, D)
+        L = x.shape[1]
+
+        alibi = self.build_alibi_bias(L, x.device, x.dtype)  # (H, L, L)
+        # nn.MultiheadAttention float mask: (B*H, L, L), batch-major
+        mask = alibi.unsqueeze(0).expand(B, -1, -1, -1).reshape(B * self.n_heads, L, L)
+
+        x = self.encoder(x, mask=mask)
+        return x[:, 0]                                      # (B, D)
 
 
 # ============================================================
@@ -248,12 +205,15 @@ class WiFormer(BaseModel):
         stride=32,
         d_model=64,
         feat=64,
+        k2_layers=2,
         k2_heads=4,
-        k2_ff=128,
-        k3_layers=2,
+        k2_ff=256,
+        k3_layers=4,
         k3_heads=4,
         k3_ff=256,
         dropout=0.1,
+        activation="gelu",
+        norm_first=True,
         sample_norm=True,
         **kwargs,
     ):
@@ -271,7 +231,6 @@ class WiFormer(BaseModel):
         self.n_rx, self.n_ant, self.n_sub = n_rx, n_ant, n_sub
         self.sample_norm = sample_norm
 
-        # Validate against loader input shape
         T = input_shape[-1]
         n_channels = math.prod(input_shape[:-1])
         if n_channels != n_rx * n_ant * n_sub:
@@ -285,10 +244,10 @@ class WiFormer(BaseModel):
 
         self.block1 = SubFeatureExtractor(d_model, feat, window, stride)
         self.block2 = JointRxSubAttention(
-            n_rx, n_sub, d_model, k2_heads, k2_ff, dropout
+            n_sub, d_model, k2_heads, k2_layers, k2_ff, dropout, activation, norm_first
         )
         self.block3 = TemporalTransformer(
-            d_model, k3_heads, k3_layers, k3_ff, dropout
+            d_model, k3_heads, k3_layers, k3_ff, dropout, activation, norm_first
         )
         self.classifier = nn.Sequential(
             nn.LayerNorm(d_model),
@@ -296,11 +255,34 @@ class WiFormer(BaseModel):
             nn.Linear(d_model, num_classes),
         )
 
+        self._init_weights()
+
+    def _init_weights(self):
+        # Linear: Xavier uniform · Conv: Kaiming · CLS / Embedding: trunc normal
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.Embedding):
+                nn.init.trunc_normal_(m.weight, std=0.02)
+        # MHA packed in_proj (Q,K,V) is not an nn.Linear -> Xavier as well
+        for m in self.modules():
+            if isinstance(m, nn.MultiheadAttention):
+                nn.init.xavier_uniform_(m.in_proj_weight)
+                nn.init.zeros_(m.in_proj_bias)
+        nn.init.trunc_normal_(self.block2.cls_token, std=0.02)
+        nn.init.trunc_normal_(self.block3.cls_token, std=0.02)
+
     def preprocess(self, x):
-        # Any of (B, C, T) / (B, R*A, S, T) / (B, R, A, S, T) -> (B, R, S, T)
+        # (B, C, T) / (B, R*A, S, T) / (B, R, A, S, T) -> (B, R, S, T)
         B, T = x.shape[0], x.shape[-1]
         x = x.reshape(B, self.n_rx, self.n_ant, self.n_sub, T)
-        x = x[:, :, 0]                           # antenna[0] of each RX
+        x = x[:, :, 0]                                      # antenna[0] of each RX
         if self.sample_norm:
             # z-score per (rx, sub) per sample, along time
             mean = x.mean(dim=-1, keepdim=True)
@@ -309,8 +291,8 @@ class WiFormer(BaseModel):
         return x
 
     def forward(self, x):
-        x = self.preprocess(x)                   # (B, R, S, T)
-        x = self.block1(x)                       # (B, R, S, n_win, D)
-        x = self.block2(x)                       # (B, n_win, D)
-        x = self.block3(x)                       # (B, D)
-        return self.classifier(x)                # (B, n_classes) logits
+        x = self.preprocess(x)                              # (B, R, S, T)
+        x = self.block1(x)                                  # (B, R, n_win, S, D)
+        x = self.block2(x)                                  # (B, n_win, D)
+        x = self.block3(x)                                  # (B, D)
+        return self.classifier(x)                           # (B, n_class) logits

@@ -14,27 +14,51 @@ import torch.nn as nn
 from torch.optim import lr_scheduler
 
 
+SCHEDULER_ARG_KEYS = {
+    "steplr": {"step_size": "step_size", "gamma": "gamma"},
+    "multisteplr": {"milestones": "milestones", "gamma": "gamma"},
+    "cosineannealinglr": {"t_max": "T_max", "T_max": "T_max", "eta_min": "eta_min"},
+    "reducelronplateau": {"patience": "patience", "threshold": "threshold", "gamma": "factor"},
+    "onecyclelr": {
+        "max_lr": "max_lr",
+        "steps_per_epoch": "steps_per_epoch",
+        "total_steps": "total_steps",
+        "epochs": "epochs",
+    },
+}
+
+
 def create_scheduler(optimizer, scheduler_cfg=None):
-    """Create a learning-rate scheduler from a config dict."""
+    """
+    Create a learning-rate scheduler from a config dict.
+
+    scheduler_cfg = {
+        "name": "cosineannealinglr",
+        "args": {...},              # only keys relevant to `name` are used
+        "warmup_epochs": 5,         # optional linear warmup (epoch-level)
+    }
+    """
     if scheduler_cfg is None:
         return None
 
     scheduler_name = scheduler_cfg.get("name")
     if scheduler_name is None or scheduler_name.lower() == "none":
         return None
+    scheduler_name = scheduler_name.lower()
+    if scheduler_name not in SCHEDULER_ARG_KEYS:
+        raise ValueError(f"Unsupported scheduler: {scheduler_name}.")
 
-    scheduler_args = scheduler_cfg.get("args", {}) or {}
+    raw_args = scheduler_cfg.get("args", {}) or {}
+    key_map = SCHEDULER_ARG_KEYS[scheduler_name]
     scheduler_args = {
-        key: value
-        for key, value in scheduler_args.items()
-        if value is not None
+        key_map[key]: value
+        for key, value in raw_args.items()
+        if key in key_map and value is not None
     }
 
-    scheduler_name = scheduler_name.lower()
     if scheduler_name == "steplr":
-        return lr_scheduler.StepLR(optimizer, **scheduler_args)
-
-    if scheduler_name == "multisteplr":
+        scheduler = lr_scheduler.StepLR(optimizer, **scheduler_args)
+    elif scheduler_name == "multisteplr":
         milestones = scheduler_args.get("milestones")
         if isinstance(milestones, str):
             scheduler_args["milestones"] = [
@@ -42,20 +66,40 @@ def create_scheduler(optimizer, scheduler_cfg=None):
                 for x in milestones.split(",")
                 if x.strip()
             ]
-        return lr_scheduler.MultiStepLR(optimizer, **scheduler_args)
-
-    if scheduler_name == "cosineannealinglr":
-        return lr_scheduler.CosineAnnealingLR(optimizer, **scheduler_args)
-
-    if scheduler_name == "reducelronplateau":
+        scheduler = lr_scheduler.MultiStepLR(optimizer, **scheduler_args)
+    elif scheduler_name == "cosineannealinglr":
+        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, **scheduler_args)
+    elif scheduler_name == "reducelronplateau":
         return lr_scheduler.ReduceLROnPlateau(optimizer, **scheduler_args)
-
-    if scheduler_name == "onecyclelr":
+    else:
         return lr_scheduler.OneCycleLR(optimizer, **scheduler_args)
 
-    raise ValueError(
-        f"Unsupported scheduler: {scheduler_name}."
-    )
+    warmup_epochs = scheduler_cfg.get("warmup_epochs") or 0
+    if warmup_epochs > 0:
+        warmup = lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=1.0 / (warmup_epochs + 1),
+            end_factor=1.0,
+            total_iters=warmup_epochs,
+        )
+        scheduler = lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[warmup, scheduler],
+            milestones=[warmup_epochs],
+        )
+    return scheduler
+
+
+def create_optimizer(model, lr, optimizer_cfg=None):
+    """Create optimizer. optimizer_cfg = {"name": "adam"|"adamw", "weight_decay": float}."""
+    optimizer_cfg = optimizer_cfg or {}
+    name = (optimizer_cfg.get("name") or "adam").lower()
+    weight_decay = optimizer_cfg.get("weight_decay") or 0.0
+    if name == "adam":
+        return torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    if name == "adamw":
+        return torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    raise ValueError(f"Unsupported optimizer: {name}.")
 
 
 # ============================================================
@@ -177,6 +221,7 @@ def train(
     device,
     save_dir,
     scheduler_cfg=None,
+    optimizer_cfg=None,
 ):
     """
     Train model.
@@ -187,6 +232,9 @@ def train(
         Optional scheduler configuration dict with keys:
         - name: scheduler type
         - args: scheduler arguments
+        - warmup_epochs: optional linear warmup
+    optimizer_cfg : dict or None
+        {"name": "adam" | "adamw", "weight_decay": float}
 
     Returns
     -------
@@ -200,15 +248,12 @@ def train(
     model = model.to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=lr,
-    )
+    optimizer = create_optimizer(model, lr, optimizer_cfg)
     scheduler = create_scheduler(optimizer, scheduler_cfg)
 
     history = []
 
-    best_acc = 0.0
+    best_acc = -1.0  # ensure best_model.pth is saved at least once
     best_epoch = 0
 
     start_time = time.time()

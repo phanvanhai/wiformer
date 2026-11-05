@@ -1,5 +1,5 @@
 # CSI-WiFormer: Kiến trúc nhận dạng hành động người với WiFi CSI
-**Phiên bản**: v4 · N_rx: 3–6 · N_sub: 30 hoặc 56 · **Cập nhật**: tháng 11/2026
+**Phiên bản**: v5 · N_rx: 3–6 · N_sub: 30 hoặc 56 · **Cập nhật**: tháng 11/2026
 
 ---
 
@@ -9,7 +9,7 @@ CSI-WiFormer là kiến trúc học máy cho bài toán Human Activity Recogniti
 
 1. **Subcarrier nhạy cảm thay đổi theo thời gian**: tại mỗi thời điểm, chỉ một số subcarrier "bắt được" chuyển động, tùy vào tần số, vị trí người, và hướng di chuyển. Mô hình cần học *sub nào đang nhạy* thay vì xử lý đồng đều.
 2. **Hành động được tổ hợp từ micro-pattern**: hành động phức tạp là chuỗi có thứ tự của các primitive motion ngắn ~0.1–0.3s. Sliding window overlap đảm bảo mọi micro-pattern được biểu diễn nguyên vẹn trong ít nhất 1 window token, và tạo continuity giữa các token liền kề.
-3. **Thông tin đa Rx bổ sung nhau**: sub_j của Rx_1 có thể cần thông tin từ sub_k của Rx_2 để phân biệt hành động — joint attention trên (Rx × Sub) đồng thời phản ánh đúng bản chất tín hiệu multipath đa Rx. Mô hình không dùng prior vị trí vật lý của Rx → permutation-invariant → đúng khi người đứng ở các vị trí khác nhau.
+3. **Thông tin đa Rx bổ sung nhau**: sub_j của Rx_1 có thể cần thông tin từ sub_k của Rx_2 để phân biệt hành động — joint attention trên (Rx × Sub) đồng thời phản ánh đúng bản chất tín hiệu multipath đa Rx. Mô hình không dùng PE_rx (positional encoding theo index Rx) → mô hình học hoàn toàn từ nội dung tín hiệu, không từ identity của Rx.
 
 ---
 
@@ -23,53 +23,105 @@ CSI-WiFormer là kiến trúc học máy cho bài toán Human Activity Recogniti
 | Sampling rate | 200 Hz |
 | Độ dài mẫu | 5 giây → T = 1000 mẫu |
 | N_sub | **30 hoặc 56** tùy dataset (xem mục 2.1) |
-| Số lớp | 7 hành động |
+| Số lớp hành động | 7 |
 | Các hành động | Đi, Chạy, Đứng lên, Ngồi xuống, Cúi nhặt, Ngã, Nằm im |
 
 ### 2.1 Lựa chọn anten và subcarrier theo dataset
-
-Nhiều dataset WiFi CSI thu thập tín hiệu với nhiều anten mỗi Rx và số lượng subcarrier khác nhau tùy chuẩn 802.11:
 
 ```
 Nếu Rx có nhiều anten:
   x = x[:, :, 0, :, :]   # chỉ lấy anten[0] của mỗi Rx
   → shape: (B, N_rx, T, N_sub)
 
-N_sub theo dataset:
-  802.11n  20 MHz → 56 subcarrier (ví dụ: dataset tự thu, NTU-Fi)
-  802.11n  20 MHz → 30 subcarrier (ví dụ: Widar3.0, UT-HAR)
-  → N_sub là hyperparameter, không ảnh hưởng kiến trúc
+N_sub theo chuẩn 802.11:
+  802.11n 20 MHz → 56 subcarrier  (ví dụ: dataset tự thu, NTU-Fi HAR)
+  802.11n 20 MHz → 30 subcarrier  (ví dụ: Widar3.0, UT-HAR)
 ```
 
-Toàn bộ kiến trúc (Khối 1, 2, 3) **không phụ thuộc giá trị cụ thể của N_sub** — chỉ PE_sub trong Khối 2 cần điều chỉnh `Embedding(N_sub, D//2)`.
+Toàn bộ kiến trúc không phụ thuộc giá trị cụ thể của N_sub. Chỉ `Embedding(N_sub, D//2)` trong Khối 2 cần điều chỉnh.
 
-### 2.2 Ảnh hưởng khi thay đổi N_rx (3→6)
+### 2.2 Ảnh hưởng khi thay đổi N_rx và N_sub
 
-| Khối | Thay đổi |
-|---|---|
-| Khối 1 | FLOPs tăng tuyến tính 2× · Params không đổi (shared weights) |
-| Khối 2 | Seq tăng: N_rx·N_sub token · FLOPs tăng O(N_rx²) · Params tăng 32/Rx (PE_rx) |
-| Khối 3 | **Không đổi** — Khối 2 đã pool về 1 vector/window bất kể N_rx |
-| Classifier | **Không đổi** |
-
-Ví dụ N_sub=56: N_rx=3 → 168 token; N_rx=6 → 336 token. Với Flash Attention (PyTorch ≥ 2.0), 336 token chạy được với VRAM 8GB+.
+| Khối | Thay đổi khi N_rx tăng | Thay đổi khi N_sub thay đổi |
+|---|---|---|
+| Khối 1 | FLOPs tăng tuyến tính · Params không đổi | FLOPs tăng tuyến tính · Params không đổi |
+| Khối 2 | Seq tăng → FLOPs tăng O(N_rx²·N_sub²) · PE_sub không đổi | Seq thay đổi → FLOPs thay đổi · PE_sub thay đổi ~N_sub·32 params |
+| Khối 3 | **Không đổi** | **Không đổi** |
+| Classifier | **Không đổi** | **Không đổi** |
 
 ---
 
-## 3. Hyperparameter
+## 3. Siêu tham số
 
-| Ký hiệu | Giá trị | Lý do |
+### 3.1 Siêu tham số cố định (kiến trúc)
+
+| Ký hiệu | Giá trị | Mô tả |
 |---|---|---|
-| W | 64 mẫu = 0.32s | Bắt được 1 chu kỳ chạy (0.25s), không loãng ngã (0.3–0.5s), lũy thừa 2 |
-| S | 32 mẫu = 0.16s | Overlap 50% — continuity giữa window liền kề |
-| n_win | 30 | ⌊(1000−64)/32⌋+1 = 30 |
-| F | 64 | Kênh đặc trưng Conv1d stack |
 | D | 64 | Chiều embedding toàn mô hình |
-| K2 n_heads | 4 | Multi-head attention Khối 2 |
-| K3 L | 2 | Số Transformer layer |
-| K3 n_heads | 4 | Số attention head |
-| K3 FFN | 256 | Chiều feedforward |
-| dropout | 0.1 | Áp dụng Transformer và Classifier |
+| F | 64 | Kênh đặc trưng output Conv1d stack (= D) |
+
+**Khối 1 — Conv1d stack**:
+
+| Ký hiệu | Giá trị | Mô tả |
+|---|---|---|
+| W | 64 mẫu = 0.32s | Window size — bắt được 1 chu kỳ chạy (0.25s), không loãng ngã (0.3–0.5s), lũy thừa 2 |
+| S | 32 mẫu = 0.16s | Stride — overlap 50%, continuity giữa window liền kề |
+| n_win | 30 | ⌊(T−W)/S⌋+1 = ⌊(1000−64)/32⌋+1 = 30 |
+| k₁ | 8 | Kernel size lớp Conv1d thứ 1 |
+| s₁ | 2 | Stride lớp Conv1d thứ 1 · W/2: 64→32 |
+| C₁ | 32 | Số kênh output lớp Conv1d thứ 1 |
+| k₂ | 4 | Kernel size lớp Conv1d thứ 2 |
+| s₂ | 2 | Stride lớp Conv1d thứ 2 · 32→16 |
+| C₂ | 64 | Số kênh output lớp Conv1d thứ 2 (= F) |
+| RF | W=64 | Receptive field: lớp 1 nhìn 8 mẫu, lớp 2 nhìn 16 mẫu, AvgPool pool toàn 16 vị trí còn lại |
+
+**Khối 2 — Joint (Rx × Sub) attention**:
+
+| Ký hiệu | Giá trị | Mô tả |
+|---|---|---|
+| L₂ | 1 | Số TransformerEncoderLayer |
+| h₂ | 4 | Số attention head |
+| d_head₂ | 16 | Chiều per head (D/h₂ = 64/4) |
+| FFN₂ | 256 | Chiều feedforward (4·D) |
+| dropout₂ | 0.1 | Dropout trong attention và FFN |
+| PE_rx | Không dùng | Không có positional encoding theo index Rx — mô hình học từ tín hiệu |
+| PE_sub | Embedding(N_sub, D//2) | Encode thứ tự tần số của subcarrier |
+| seq₂ | N_rx · N_sub + 1 | Sequence length (gồm CLS token) |
+
+Ví dụ seq₂: N_rx=3, N_sub=56 → 169 token; N_rx=3, N_sub=30 → 91 token; N_rx=6, N_sub=56 → 337 token.
+
+**Khối 3 — Temporal Transformer**:
+
+| Ký hiệu | Giá trị | Mô tả |
+|---|---|---|
+| L₃ | 2 | Số TransformerEncoderLayer |
+| h₃ | 4 | Số attention head |
+| d_head₃ | 16 | Chiều per head (D/h₃ = 64/4) |
+| FFN₃ | 256 | Chiều feedforward (4·D) |
+| dropout₃ | 0.1 | Dropout trong attention và FFN |
+| PE_win | ALiBi | Relative positional bias — không inject vị trí tuyệt đối |
+| seq₃ | n_win + 1 = 31 | Sequence length (n_win=30 window token + 1 CLS token) |
+
+ALiBi slope: `m_h = 2^(−8h/n_heads)` với h = 1..n_heads. Không có tham số học.
+
+**Classifier**:
+
+| Ký hiệu | Giá trị | Mô tả |
+|---|---|---|
+| dropout_clf | 0.1 | Dropout trước Linear |
+| n_class | 7 | Số lớp hành động |
+
+### 3.2 Siêu tham số huấn luyện (đề xuất)
+
+| Ký hiệu | Giá trị đề xuất | Mô tả |
+|---|---|---|
+| Optimizer | AdamW | Weight decay = 0.01 |
+| lr | 1e-4 | Learning rate khởi đầu |
+| lr scheduler | CosineAnnealingLR | T_max = số epoch |
+| batch size | 32 | Giảm xuống 16 nếu VRAM thiếu |
+| epochs | 100 | Có thể dùng early stopping |
+| warmup | 5 epoch | Linear warmup |
+| weight init | Xavier uniform | Cho Linear; Conv dùng Kaiming |
 
 ---
 
@@ -84,17 +136,17 @@ Input raw      (B, N_rx, N_ant, T, N_sub)   nếu dataset có nhiều anten
   ├─ Norm        z-score per sub per sample
   │              (B, N_rx, T, N_sub)
   │
-  ├─ Khối 1     unfold(W=64, S=32) → Conv1d stack (shared)
+  ├─ Khối 1     unfold(W=64, S=32) → Conv1d stack (shared weights)
   │              (B, N_rx, n_win=30, N_sub, D=64)
   │
-  ├─ Khối 2     flatten (N_rx×N_sub token) + PE + self-attn + CLS
+  ├─ Khối 2     flatten (N_rx·N_sub token) + PE_sub + self-attn + CLS
   │              (B, n_win=30, D=64)   ← không phụ thuộc N_rx, N_sub
   │
   ├─ Khối 3     CLS + ALiBi + Transformer (31 token, L=2)
   │              (B, D=64)
   │
   └─ Classifier  LayerNorm → Dropout → Linear(D, n_class) → Softmax
-                 (B, n_class)
+                 (B, 7)
 ```
 
 ---
@@ -115,158 +167,217 @@ x = x[:, :, 0, :, :]   # lấy anten[0] của mỗi Rx
 
 ```python
 # x: (B, N_rx, T, N_sub)
-mean = x.mean(dim=2, keepdim=True)
+mean = x.mean(dim=2, keepdim=True)   # mean trên trục T
 std  = x.std(dim=2, keepdim=True) + 1e-6
 x    = (x - mean) / std
 ```
-
-M��c đích: loại bỏ bias biên độ tuyệt đối phụ thuộc môi trường và thiết bị. Mô hình chỉ học pattern tương đối của chuyển động.
 
 ---
 
 ### 5.1 Khối 1 — Sub feature extractor
 
-M��c đích: trích xuất primitive motion pattern trong từng window 0.32s của từng subcarrier. Shared weights giữa tất cả subcarrier, Rx, và window.
-
-**Bước 1 — Unfold (sliding window)**:
+**Params**: 12,896 (không đổi theo N_rx, N_sub)
 
 ```python
+# Bước 1: Unfold
 # x: (B, N_rx, N_sub, T)
 x = x.unfold(dimension=-1, size=64, step=32)
 # x: (B, N_rx, N_sub, n_win=30, W=64)
+
+# Bước 2: Reshape để xử lý song song
+x = x.permute(0, 1, 3, 2, 4)
+x = x.reshape(B * N_rx * n_win * N_sub, 1, W)
+# x: (B·N_rx·n_win·N_sub, 1, 64)
+
+# Bước 3: Conv1d stack (shared weights)
+# Conv1d(1→32, k=8, s=2) + BN + GELU   → (*, 32, 32)
+# Conv1d(32→64, k=4, s=2) + BN + GELU  → (*, 64, 16)
+# AdaptiveAvgPool1d(1)                   → (*, 64, 1)
+# squeeze(-1)                            → (*, 64)
+# Linear(64, D=64)                       → (*, D)
+
+# Bước 4: Reshape về tensor gốc
+x = x.reshape(B, N_rx, n_win, N_sub, D)
+# x: (B, N_rx, n_win=30, N_sub, D=64)
 ```
-
-Overlap 50%: hai window liền kề chia sẻ 32 mẫu → continuity trong chuỗi token đưa vào Khối 3. Mọi micro-pattern xuất hiện nguyên vẹn trong ít nhất 1 window.
-
-**Bước 2 — Conv1d stack (shared weights)**:
-
-```python
-# Reshape: (B·N_rx·N_sub·n_win, 1, W=64)
-encoder = nn.Sequential(
-    nn.Conv1d(1,  32, kernel_size=8, stride=2, padding=3),  # → (*, 32, 32)
-    nn.BatchNorm1d(32),
-    nn.GELU(),
-    nn.Conv1d(32, 64, kernel_size=4, stride=2, padding=1),  # → (*, 64, 16)
-    nn.BatchNorm1d(64),
-    nn.GELU(),
-    nn.AdaptiveAvgPool1d(1),                                  # → (*, 64, 1)
-)
-# → squeeze → Linear(64, D=64)
-# → reshape → (B, N_rx, n_win=30, N_sub, D=64)
-```
-
-Receptive field: lớp 1 nhìn 8 mẫu, lớp 2 nhìn 16 mẫu, AvgPool pool toàn bộ W=64 → phủ đủ window.
-
-**Output**: `(B, N_rx, n_win=30, N_sub, D=64)` · **Params**: 12,896 (không đổi theo N_rx, N_sub)
 
 ---
 
 ### 5.2 Khối 2 — Joint (Rx × Sub) attention per window
 
-M��c đích: học đồng thời "subcarrier nào và Rx nào đang nhạy cảm trong window này". [Rx_i, sub_j] attend trực tiếp đến [Rx_k, sub_l] trong 1 bước — không factorized.
+**Params**: D²/h₂ · 4 · h₂ + 2·FFN₂·D + N_sub·D//2 + D² + D ≈ 33K + N_sub·32
+
+Không dùng PE_rx — mô hình không biết token đến từ Rx nào, chỉ biết token đến từ subcarrier nào (qua PE_sub). Attention phân biệt các Rx hoàn toàn từ nội dung tín hiệu.
 
 ```python
 # x: (B, N_rx, n_win, N_sub, D)
-# Xử lý độc lập cho mỗi window
+
+# Bước 1: Tách per window, flatten Rx và Sub
 x = x.permute(0, 2, 1, 3, 4)
-x = x.reshape(B * n_win, N_rx * N_sub, D)   # (B·n_win, N_rx·N_sub, D)
+x = x.reshape(B * n_win, N_rx * N_sub, D)
+# x: (B·n_win, N_rx·N_sub, D)
 
-# Factorized positional encoding: concat thay vì cộng
-# → phân biệt (Rx2,sub3) với (Rx3,sub2)
-pe_rx  = self.embed_rx(rx_idx)    # Embedding(N_rx,  D//2)
-pe_sub = self.embed_sub(sub_idx)  # Embedding(N_sub, D//2)
-pe = torch.cat([
-    pe_rx.unsqueeze(1).expand(-1, N_sub, -1),   # (N_rx, N_sub, D//2)
-    pe_sub.unsqueeze(0).expand(N_rx, -1, -1),   # (N_rx, N_sub, D//2)
-], dim=-1).reshape(N_rx * N_sub, D)              # (N_rx·N_sub, D)
-pe = self.pe_proj(pe)                            # Linear(D, D)
-x  = x + pe.unsqueeze(0)                        # broadcast over B·n_win
+# Bước 2: Positional encoding — chỉ PE_sub, không PE_rx
+sub_idx = torch.arange(N_sub, device=x.device)
+pe_sub  = self.embed_sub(sub_idx)                    # (N_sub, D//2)
+# Project D//2 → D, broadcast cho N_rx
+pe = self.pe_proj(
+    pe_sub.unsqueeze(0).expand(N_rx, -1, -1)         # (N_rx, N_sub, D//2)
+         .reshape(N_rx * N_sub, D // 2)
+)                                                      # (N_rx·N_sub, D)
+x = x + pe.unsqueeze(0)                              # broadcast B·n_win
 
-# Prepend CLS token + self-attention
+# Bước 3: Prepend CLS token
 cls = self.cls_token.expand(B * n_win, 1, D)
-x   = torch.cat([cls, x], dim=1)                # (B·n_win, 1+N_rx·N_sub, D)
-x   = self.attn_layer(x)                        # TransformerEncoderLayer, n_heads=4
+x   = torch.cat([cls, x], dim=1)
+# x: (B·n_win, 1 + N_rx·N_sub, D)
 
-# Lấy CLS output
-out = x[:, 0, :].reshape(B, n_win, D)           # (B, n_win=30, D)
+# Bước 4: Self-attention (1 layer)
+x = self.attn_layer(x)   # TransformerEncoderLayer(D, h₂=4, FFN₂=256)
+
+# Bước 5: Lấy CLS output
+out = x[:, 0, :].reshape(B, n_win, D)
+# out: (B, n_win=30, D=64)
 ```
-
-Lý do không dùng PE_rx theo vị trí vật lý: mô hình học từ tín hiệu thuần túy → permutation-invariant trên trục Rx → đúng khi người đứng gần các Rx khác nhau trong phòng.
-
-**Output**: `(B, n_win=30, D=64)` · **Params**: ~33K + 32·N_rx (PE_rx)
 
 ---
 
 ### 5.3 Khối 3 — Temporal Transformer
 
-M��c đích: học temporal composition — cách các primitive pattern (window token) kết hợp thành sub-action và action. Window liền kề chia sẻ 50% tín hiệu → Transformer học transition giữa các pattern.
-
-**ALiBi positional bias**:
-
-```python
-# Không inject vị trí tuyệt đối → không bias khi hành động
-# xuất hiện ở đầu, giữa, hay cuối mẫu 5s
-# score(i,j) = Q_i · K_j / √D − m · |i−j|
-# m: slope cố định per head, không học
-
-def get_alibi_slopes(n_heads: int) -> torch.Tensor:
-    return 2 ** (-8 / n_heads * torch.arange(1, n_heads + 1, dtype=torch.float32))
-```
-
-**Pipeline**:
+**Params**: L₃ · (4·D² + 2·FFN₃·D + 4·D) ≈ 2 · (16K + 32K + 256) ≈ 100K
 
 ```python
 # x: (B, n_win=30, D)
-cls = self.cls_token.expand(B, 1, D)
-x   = torch.cat([cls, x], dim=1)              # (B, 31, D)
-x   = self.transformer_encoder(x,
-          attn_bias=alibi_bias)                # L=2, n_heads=4, FFN=256, dropout=0.1
-out = x[:, 0, :]                               # CLS → (B, D=64)
-```
 
-**Output**: `(B, D=64)` · **Params**: ~100K · Seq=31 token · Không đổi theo N_rx, N_sub
+# Bước 1: ALiBi bias matrix (không có tham số học)
+slopes = 2 ** (-8 / h₃ * torch.arange(1, h₃+1))   # (h₃,)
+dist   = torch.abs(
+    torch.arange(seq₃).unsqueeze(0) -
+    torch.arange(seq₃).unsqueeze(1)
+)                                                     # (seq₃, seq₃)
+alibi  = -slopes.view(-1,1,1) * dist.unsqueeze(0)   # (h₃, seq₃, seq₃)
+
+# Bước 2: Prepend CLS token
+cls = self.cls_token.expand(B, 1, D)
+x   = torch.cat([cls, x], dim=1)
+# x: (B, 31, D)
+
+# Bước 3: Transformer Encoder (L₃=2 layers)
+x = self.transformer_encoder(x, attn_bias=alibi)
+# x: (B, 31, D)
+
+# Bước 4: Lấy CLS output
+out = x[:, 0, :]
+# out: (B, D=64)
+```
 
 ---
 
 ### 5.4 Classifier
 
+**Params**: D·n_class + n_class + 2·D = 64·7 + 7 + 128 = 583
+
 ```python
-classifier = nn.Sequential(
-    nn.LayerNorm(D),
-    nn.Dropout(0.1),
-    nn.Linear(D, n_class),
-)
+# x: (B, D=64)
+x = nn.LayerNorm(D)(x)
+x = nn.Dropout(0.1)(x)
+x = nn.Linear(D, n_class)(x)   # (B, 7)
 # → Softmax → P(action)
 ```
 
-**Params**: D·n_class + n_class + 2D (ví dụ: 7 lớp → 583 params)
-
 ---
 
-## 6. Thống kê mô hình
+## 6. Thống kê tham số và FLOPs
+
+### 6.1 Số tham số chi tiết
 
 ```
-Cấu hình: N_rx=3, N_sub=56, D=64, n_class=7
+─────────────────────────────────────────────────────────────
+Khối 0  Norm                             0
+─────────────────────────────────────────────────────────────
+Khối 1  Conv1d(1→32, k=8)               1×32×8 + 32   =    288
+        BN(32)                           32×2          =     64
+        Conv1d(32→64, k=4)              32×64×4 + 64  =  8,256
+        BN(64)                           64×2          =    128
+        Linear(64, D=64)                64×64 + 64    =  4,160
+        ─────────────────────────────────────────────── 12,896
+─────────────────────────────────────────────────────────────
+Khối 2  PE_sub  Embedding(N_sub, D//2)
+                N_sub=56: 56×32         =  1,792
+                N_sub=30: 30×32         =    960
+        pe_proj Linear(D//2, D)         32×64+64      =  2,112
+        CLS token                       1×D           =     64
+        MHA     W_Q,K,V,O (4×D²/h₂×h₂) 4×D²          = 16,384
+        FFN     W₁,b₁,W₂,b₂            2×D×FFN₂      = 32,768
+        LayerNorm ×2                    4×D            =    256
+        ─────────────────────────────────────────────────────
+        Tổng K2 (N_sub=56)                            ~53,376
+        Tổng K2 (N_sub=30)                            ~52,544
+─────────────────────────────────────────────────────────────
+Khối 3  CLS token                       1×D           =     64
+        MHA ×2 layers                   2×4×D²        = 32,768
+        FFN ×2 layers                   2×2×D×FFN₃    = 65,536
+        LayerNorm ×4                    4×2×D          =    512
+        ─────────────────────────────────────────────── 98,880
+─────────────────────────────────────────────────────────────
+Classifier
+        LayerNorm                       2×D            =    128
+        Linear(D, 7)                    D×7+7          =    455
+        ─────────────────────────────────────────────────  583
+─────────────────────────────────────────────────────────────
+TỔNG (N_sub=56, N_rx=3)                              ~165,735
+TỔNG (N_sub=30, N_rx=3)                              ~164,903
+─────────────────────────────────────────────────────────────
+```
 
-Khối           Params          FLOPs/sample
-──────────────────────────────────────────────
-Khối 1         12,896          ~1.45G
-Khối 2         ~33,376         ~2.47G
-Khối 3         ~99,992         ~4.1M
-Classifier     583             <0.1M
-──────────────────────────────────────────────
-Tổng           ~146,847        ~3.93G
+*Lưu ý: N_rx không ảnh hưởng đến số tham số vì không có PE_rx.*
 
-Với N_sub=30 (thay vì 56), Khối 2:
-  Seq: 3×30=90 token (thay vì 168)
-  FLOPs Khối 2 giảm ~3.5×
-  Params Khối 2 giảm ~1K (PE_sub nhỏ hơn)
+### 6.2 FLOPs ước tính per sample
 
-Với N_rx=6 (thay vì 3):
-  FLOPs Khối 1 tăng 2×
-  FLOPs Khối 2 tăng ~4× (do seq² tăng 4×)
-  Params tăng thêm 3×32=96
-  Khối 3 không thay đổi
+```
+─────────────────────────────────────────────────────────────────────
+Khối 1  instances = N_rx × N_sub × n_win
+        N_rx=3, N_sub=56: 3×56×30 = 5,040 instances
+        FLOPs/instance:
+          Conv1d lớp 1:  2×8×1×32×32    =   16,384
+          Conv1d lớp 2:  2×4×32×64×16   =  262,144
+          AvgPool:        64×16          =    1,024
+          Linear:         2×64×64        =    8,192
+        FLOPs/instance ≈ 287,744 ≈ 288K
+        Tổng K1 (N_rx=3, N_sub=56): 5,040×288K ≈ 1.45G
+        Tổng K1 (N_rx=3, N_sub=30): 2,700×288K ≈ 0.78G
+
+Khối 2  seq = N_rx·N_sub + 1
+        FLOPs attention ≈ 4·seq²·D + 2·seq·D·FFN₂
+        N_rx=3, N_sub=56: seq=169
+          attn: 4×169²×64 ≈ 7.3M · FFN: 2×169×64×256 ≈ 5.6M
+          per win ≈ 12.9M · ×30 win ≈ 387M per sample
+        N_rx=3, N_sub=30: seq=91
+          per win ≈ 3.9M  · ×30 win ≈ 117M per sample
+
+Khối 3  seq=31, L=2
+        attn: 2×4×31²×64 ≈ 0.49M
+        FFN:  2×2×31×64×256 ≈ 2.05M
+        Tổng K3 ≈ 2.5M per sample
+
+─────────────────────────────────────────────────────────────────────
+TỔNG FLOPs/sample (N_rx=3, N_sub=56) ≈ 1.45G + 0.39G + 0.003G ≈ 1.84G
+TỔNG FLOPs/sample (N_rx=3, N_sub=30) ≈ 0.78G + 0.12G + 0.003G ≈ 0.90G
+TỔNG FLOPs/sample (N_rx=6, N_sub=56) ≈ 2.90G + 1.46G + 0.003G ≈ 4.36G
+─────────────────────────────────────────────────────────────────────
+```
+
+### 6.3 So sánh tổng quan
+
+```
+M� hình              Params      FLOPs/sample (ước tính)
+──────────────────────────────────────────────────────────
+THAT (AAAI'21)       ~2M         ~1.8G
+WiFlexFormer (2024)  ~100K       ~0.3G
+AMCS-TCN             ~2M+        ~2G+
+UniFi (IMWUT'24)     ~11M+       ~5G+
+CSI-WiFormer N_sub=56 ~166K      ~1.84G
+CSI-WiFormer N_sub=30 ~165K      ~0.90G
 ```
 
 ---
@@ -284,7 +395,7 @@ Với N_rx=6 (thay vì 3):
 | Sliding overlap | Không | Không | Không | **Có** |
 | Multi-Rx | Không | Không | Fuse global | **Joint, N_rx linh hoạt** |
 | Positional encoding | Gaussian range | Standard APE | — | **ALiBi (relative)** |
-| Params | ~2M | ~100K | ~2M+ | **~147K** |
+| Params | ~2M | ~100K | ~2M+ | **~166K** |
 | Code công khai | Không | Có | Không | — |
 
 ### 7.2 Multi-view attention (tham khảo)
@@ -301,17 +412,19 @@ Với N_rx=6 (thay vì 3):
 
 ## 8. Điểm thiết kế nổi bật
 
-**Joint (Rx × Sub) attention** (Khối 2): [Rx_i, sub_j] attend trực tiếp đến [Rx_k, sub_l] trong 1 operation — không factorized như THAT hay UniFi. Phản ánh bản chất vật lý: sub_j của Rx_1 cần thông tin từ sub_k của Rx_2.
+**Joint (Rx × Sub) attention** (Khối 2): [Rx_i, sub_j] attend trực tiếp đến [Rx_k, sub_l] trong 1 operation — không factorized như THAT hay UniFi.
 
-**Sliding window overlap 50%** (Khối 1): đảm bảo micro-pattern không bị cắt đứt giữa 2 window; tạo continuity trong chuỗi token (window liền kề chia sẻ 50% tín hiệu).
+**Không dùng PE_rx**: mô hình không biết token đến từ Rx nào — hoàn toàn học từ nội dung tín hiệu. Phân biệt Rx hoàn toàn qua attention score. Đúng về mặt vật lý khi người đứng ở vị trí bất kỳ trong phòng.
 
-**Permutation-invariant trên Rx**: không dùng PE_rx theo vị trí vật lý → mô hình học từ tín hiệu thuần túy → đúng khi người đứng ở vị trí bất kỳ.
+**Chỉ dùng PE_sub**: subcarrier có cấu trúc tần số — sub liền kề tương quan cao hơn sub xa. PE_sub encode thứ tự tần số này mà không tạo shortcut theo identity Rx.
+
+**Sliding window overlap 50%** (Khối 1): đảm bảo micro-pattern không bị cắt đứt giữa 2 window; tạo continuity trong chuỗi token.
 
 **ALiBi positional bias** (Khối 3): encode khoảng cách tương đối, không vị trí tuyệt đối → không bị bias khi hành động xuất hiện ở đầu/giữa/cuối mẫu 5s.
 
-**Scale tự nhiên theo N_rx và N_sub**: thêm Rx chỉ tăng thêm 32 params/Rx (PE_rx); thay đổi N_sub chỉ ảnh hưởng PE_sub; Khối 3 và Classifier hoàn toàn không thay đổi.
+**Scale tự nhiên theo N_rx và N_sub**: thay đổi N_rx không ảnh hưởng params (không có PE_rx); thay đổi N_sub chỉ ảnh hưởng PE_sub (~32 params/sub); Khối 3 và Classifier hoàn toàn không thay đổi.
 
-**Shared weights** (Khối 1 và Khối 2): ~147K params — nhỏ hơn 10–70× so với các baseline.
+**Shared weights** (Khối 1 và Khối 2): ~166K params tổng — nhỏ hơn 10–70× so với baseline.
 
 ---
 
