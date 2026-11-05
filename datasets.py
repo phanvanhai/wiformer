@@ -752,7 +752,8 @@ class XRF55Dataset(Dataset):
         if not self.root_dir.exists():
             raise FileNotFoundError(f"Directory not found: {self.root_dir}")
 
-        for file_path in self.root_dir.glob("*.npy"):
+        # Search recursively so data_root may point to a parent folder
+        for file_path in sorted(self.root_dir.rglob("*.npy")):
             name_parts = file_path.stem.split('_')
             
             # Ensure it matches a_b_c format
@@ -1095,6 +1096,16 @@ def load_dataset(
         )
 
     # =======================================================
+    for split_name, ds in (("train", train_dataset), ("test", test_dataset)):
+        if len(ds) == 0:
+            raise RuntimeError(
+                f"[{name}] {split_name} split is empty (0 samples). "
+                f"Check --data_root='{root_dir}' (files must exist under it, "
+                f"named as expected), the allowed labels {tuple(allowed_labels)}, "
+                f"and the split mode (SPLIT_BY_REPEAT={SPLIT_BY_REPEAT}, "
+                f"case_split={case_split})."
+            )
+
     train_loader, test_loader = create_dataloader(
         train_dataset,
         test_dataset,
