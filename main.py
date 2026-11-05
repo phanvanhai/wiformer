@@ -259,7 +259,15 @@ def parse_args():
             type=int,
             default=0,
             choices=[0, 1, 2, 3, 4],
-            help="case split from 0 to 4"
+            help="case split from 0 to 4 (used when --split_mode=user)"
+        )
+
+    parser.add_argument(
+            "--split_mode",
+            type=str,
+            default="repeat",
+            choices=["repeat", "user"],
+            help="train/test split: 'repeat' (by repetition index) or 'user' (cross-user, uses --case_split)"
         )
 
     return parser.parse_args()
@@ -348,6 +356,7 @@ def main():
     # --------------------------------------------------------
     dataset_kwargs = {}
     dataset_kwargs["case_split"] = args.case_split
+    dataset_kwargs["split_mode"] = args.split_mode
 
     if args.model == "cnn_gru":
         train_loader, test_loader, info = load_dataset(
@@ -539,3 +548,4 @@ if __name__ == "__main__":
     main()
 
 # python main.py --data_root=".\data\" --dataset="ut_har" --model="mlp" --case_split=0
+# python main.py --data_root=".\data\" --dataset="xrf55" --model="wiformer" --split_mode=user --case_split=2

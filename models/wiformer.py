@@ -22,6 +22,7 @@ import math
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .base import BaseModel
 
@@ -42,8 +43,48 @@ WIFORMER_DATASET_CFG = {
 }
 
 
+class SafeTransformerEncoderLayer(nn.TransformerEncoderLayer):
+    """
+    nn.TransformerEncoderLayer that never takes PyTorch's eval-mode "fast path".
+
+    With a per-head float mask (ALiBi, shape (B*H, L, L)) the fused fast path
+    (torch._transformer_encoder_layer_fwd / _native_multi_head_attention)
+    returns the same output for every sample in eval mode -> constant
+    predictions at test time (acc = 1/num_classes). Same parameters /
+    state_dict keys as the parent class.
+    """
+
+    def forward(self, src, src_mask=None, src_key_padding_mask=None, is_causal=False):
+        x = src
+        if self.norm_first:
+            x = x + self._safe_sa(self.norm1(x), src_mask, src_key_padding_mask)
+            x = x + self._ff_block(self.norm2(x))
+        else:
+            x = self.norm1(x + self._safe_sa(x, src_mask, src_key_padding_mask))
+            x = self.norm2(x + self._ff_block(x))
+        return x
+
+    def _safe_sa(self, x, attn_mask, key_padding_mask):
+        # Call the functional MHA directly so MultiheadAttention's own
+        # fast path is bypassed as well.
+        attn = self.self_attn
+        q = x.transpose(0, 1)                              # (L, B, D)
+        out, _ = F.multi_head_attention_forward(
+            q, q, q,
+            attn.embed_dim, attn.num_heads,
+            attn.in_proj_weight, attn.in_proj_bias,
+            attn.bias_k, attn.bias_v, attn.add_zero_attn,
+            attn.dropout, attn.out_proj.weight, attn.out_proj.bias,
+            training=self.training,
+            key_padding_mask=key_padding_mask,
+            need_weights=False,
+            attn_mask=attn_mask,
+        )
+        return self.dropout1(out.transpose(0, 1))
+
+
 def make_encoder_layer(d_model, n_heads, dim_ff, dropout, activation, norm_first):
-    return nn.TransformerEncoderLayer(
+    return SafeTransformerEncoderLayer(
         d_model=d_model,
         nhead=n_heads,
         dim_feedforward=dim_ff,

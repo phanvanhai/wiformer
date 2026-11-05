@@ -25,7 +25,17 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 
 
-SPLIT_BY_REPEAT  = 1
+# Default split mode when none is passed: "repeat" (by repetition index)
+# or "user" (cross-user, train users given by USER_CASES[...][case_split]).
+SPLIT_MODES = ("repeat", "user")
+DEFAULT_SPLIT_MODE = "repeat"
+
+
+def _check_split_mode(split_mode):
+    split_mode = (split_mode or DEFAULT_SPLIT_MODE).lower()
+    if split_mode not in SPLIT_MODES:
+        raise ValueError(f"split_mode must be one of {SPLIT_MODES}, got '{split_mode}'")
+    return split_mode
 
 # ============================================================
 # Default configuration
@@ -261,8 +271,12 @@ def compute_ut_har_mean_std(root_dir):
     total_sq = 0.0
     total_count = 0
 
-    for x, _ in dataset:
-        x = x.numpy()
+    n = len(dataset)
+    print(f"[XRF55] computing mean/std over {n} train samples ...")
+    for i, (x, _) in enumerate(dataset):
+        if (i + 1) % 500 == 0 or i + 1 == n:
+            print(f"[XRF55]   mean/std {i + 1}/{n}")
+        x = x.numpy().astype(np.float64)
         total_sum += x.sum()
         total_sq += np.square(x).sum()
         total_count += x.size
@@ -309,6 +323,7 @@ class _SSHARDatasetBase(Dataset):
         signal="amp",
         split="train",
         case_split = 0,
+        split_mode=DEFAULT_SPLIT_MODE,
         shape_option="2d",
         normalize=True,
         norm_type="zscore",
@@ -327,6 +342,7 @@ class _SSHARDatasetBase(Dataset):
         self.signal = signal
         self.split = split
         self.case_split = case_split
+        self.split_mode = _check_split_mode(split_mode)
         self.shape_option = shape_option
         self.normalize = normalize
         self.norm_type = norm_type
@@ -443,7 +459,7 @@ class _SSHARDatasetBase(Dataset):
                         continue
 
                     
-                    if SPLIT_BY_REPEAT:
+                    if self.split_mode == "repeat":
                         # Chia theo so lan lap
                         is_train = (rep <= 8 if direction == 0 else rep <= 4)
                         # print("Split by repeat")
@@ -593,6 +609,7 @@ class SSHAR_ESP_Dataset(_SSHARDatasetBase):
         signal="amp",
         split="train",
         case_split = 0,
+        split_mode=DEFAULT_SPLIT_MODE,
         shape_option="2d",
         normalize=True,
         norm_type="zscore",
@@ -611,6 +628,7 @@ class SSHAR_ESP_Dataset(_SSHARDatasetBase):
             signal=signal,
             split=split,
             case_split = case_split,
+            split_mode=split_mode,
             shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
@@ -634,6 +652,7 @@ class SSHAR_ASUS_Dataset(_SSHARDatasetBase):
         signal="amp",
         split="train",
         case_split = 0,
+        split_mode=DEFAULT_SPLIT_MODE,
         shape_option="2d",
         normalize=True,
         norm_type="zscore",
@@ -652,6 +671,7 @@ class SSHAR_ASUS_Dataset(_SSHARDatasetBase):
             signal=signal,
             split=split,
             case_split = case_split,
+            split_mode=split_mode,
             shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
@@ -685,8 +705,12 @@ def compute_sshar_mean_std(dataset):
     total_sq = 0.0
     total_count = 0
 
-    for x, _ in dataset:
-        x = x.numpy()
+    n = len(dataset)
+    print(f"[XRF55] computing mean/std over {n} train samples ...")
+    for i, (x, _) in enumerate(dataset):
+        if (i + 1) % 500 == 0 or i + 1 == n:
+            print(f"[XRF55]   mean/std {i + 1}/{n}")
+        x = x.numpy().astype(np.float64)
         total_sum += x.sum()
         total_sq += np.square(x).sum()
         total_count += x.size
@@ -705,6 +729,42 @@ def compute_sshar_mean_std(dataset):
 # ============================================================
 # XRF55 Dataset (Subset)
 # ============================================================
+_XRF55_FILE_CACHE = {}
+
+
+def find_xrf55_wifi_files(root_dir):
+    """
+    Locate XRF55 WiFi .npy files.
+
+    1. *.npy directly inside root_dir  (root_dir is the WiFi folder)
+    2. otherwise *.npy inside sub-folders named 'WiFi' (case-insensitive),
+       e.g. root/train_data/WiFi, root/test_data/WiFi.
+       Other modalities (mmWave, RFID, ...) are never included.
+    """
+    root_dir = Path(root_dir)
+    key = str(root_dir.resolve())
+    if key in _XRF55_FILE_CACHE:
+        return _XRF55_FILE_CACHE[key]
+
+    files = sorted(root_dir.glob("*.npy"))
+    if files:
+        print(f"[XRF55] {len(files)} .npy files in {root_dir}")
+    else:
+        wifi_dirs = sorted(
+            d for d in root_dir.rglob("*")
+            if d.is_dir() and d.name.lower() == "wifi"
+        )
+        for d in wifi_dirs:
+            found = sorted(d.glob("*.npy"))
+            print(f"[XRF55] {len(found)} .npy files in {d}")
+            files.extend(found)
+        if not wifi_dirs:
+            print(f"[XRF55] no .npy files in {root_dir} and no 'WiFi' sub-folder found")
+
+    _XRF55_FILE_CACHE[key] = files
+    return files
+
+
 class XRF55Dataset(Dataset):
     """
     XRF55 Dataset (Subset for 8 actions and all users)
@@ -723,6 +783,7 @@ class XRF55Dataset(Dataset):
         root_dir,
         split="train",
         case_split=0,
+        split_mode=DEFAULT_SPLIT_MODE,
         shape_option="2d",
         num_sub=30,  # XRF55 typically uses Intel 5300 with 30 subcarriers per antenna
         normalize=True,
@@ -735,6 +796,7 @@ class XRF55Dataset(Dataset):
         self.root_dir = Path(root_dir)
         self.split = split
         self.case_split = case_split
+        self.split_mode = _check_split_mode(split_mode)
         self.shape_option = shape_option
         self.num_sub = num_sub
         self.normalize = normalize
@@ -752,8 +814,7 @@ class XRF55Dataset(Dataset):
         if not self.root_dir.exists():
             raise FileNotFoundError(f"Directory not found: {self.root_dir}")
 
-        # Search recursively so data_root may point to a parent folder
-        for file_path in sorted(self.root_dir.rglob("*.npy")):
+        for file_path in find_xrf55_wifi_files(self.root_dir):
             name_parts = file_path.stem.split('_')
             
             # Ensure it matches a_b_c format
@@ -765,7 +826,7 @@ class XRF55Dataset(Dataset):
                 if action_id_int not in self.label_map:
                     continue
 
-                if SPLIT_BY_REPEAT:
+                if self.split_mode == "repeat":
                     # Chia theo so lan lap                
                     is_train = rep_num <= 16
                 else:
@@ -832,7 +893,8 @@ class XRF55Dataset(Dataset):
 # ============================================================
 # Compute XRF55 mean/std
 # ============================================================
-def compute_xrf55_mean_std(root_dir, case_split, shape_option="2d", num_sub=30, target_time=None):
+def compute_xrf55_mean_std(root_dir, case_split, shape_option="2d", num_sub=30, target_time=None,
+                           split_mode=DEFAULT_SPLIT_MODE):
     """
     Compute global mean/std for XRF55 using TRAIN split only.
     """
@@ -840,6 +902,7 @@ def compute_xrf55_mean_std(root_dir, case_split, shape_option="2d", num_sub=30, 
         root_dir=root_dir,
         split="train",
         case_split=case_split,
+        split_mode=split_mode,
         shape_option=shape_option,
         num_sub=num_sub,
         normalize=False,
@@ -850,8 +913,12 @@ def compute_xrf55_mean_std(root_dir, case_split, shape_option="2d", num_sub=30, 
     total_sq = 0.0
     total_count = 0
 
-    for x, _ in dataset:
-        x = x.numpy()
+    n = len(dataset)
+    print(f"[XRF55] computing mean/std over {n} train samples ...")
+    for i, (x, _) in enumerate(dataset):
+        if (i + 1) % 500 == 0 or i + 1 == n:
+            print(f"[XRF55]   mean/std {i + 1}/{n}")
+        x = x.numpy().astype(np.float64)
         total_sum += x.sum()
         total_sq += np.square(x).sum()
         total_count += x.size
@@ -922,7 +989,11 @@ def load_dataset(
     intel_shape = kwargs.get("intel_shape", False)
     allowed_labels = kwargs.get("allowed_labels", DEFAULT_SELECTED_LABELS)
     case_split = kwargs.get("case_split", 0)
-    print(f"Split case = {case_split}")
+    split_mode = _check_split_mode(kwargs.get("split_mode", DEFAULT_SPLIT_MODE))
+    if split_mode == "user":
+        print(f"Split mode = user, case = {case_split}")
+    else:
+        print("Split mode = repeat")
 
     # =======================================================
     # UT_HAR
@@ -968,6 +1039,7 @@ def load_dataset(
                 root_dir=root_dir,
                 split="train",
                 case_split=case_split,
+                split_mode=split_mode,
                 shape_option=shape_option,
                 normalize=False,
                 target_time=target_time,
@@ -979,6 +1051,7 @@ def load_dataset(
             root_dir=root_dir,
             split="train",
             case_split=case_split,
+            split_mode=split_mode,
             shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
@@ -993,6 +1066,7 @@ def load_dataset(
             root_dir=root_dir,
             split="test",
             case_split=case_split,
+            split_mode=split_mode,
             shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
@@ -1016,6 +1090,7 @@ def load_dataset(
                 root_dir=root_dir,
                 split="train",
                 case_split=case_split,
+                split_mode=split_mode,
                 shape_option=shape_option,
                 normalize=False,
                 target_time=target_time,
@@ -1027,6 +1102,7 @@ def load_dataset(
             root_dir=root_dir,
             split="train",
             case_split=case_split,
+            split_mode=split_mode,
             shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
@@ -1041,6 +1117,7 @@ def load_dataset(
             root_dir=root_dir,
             split="test",
             case_split=case_split,
+            split_mode=split_mode,
             shape_option=shape_option,
             normalize=normalize,
             norm_type=norm_type,
@@ -1060,12 +1137,14 @@ def load_dataset(
 
         mean = std = None
         if normalize and norm_type == "zscore":
-            mean, std = compute_xrf55_mean_std(root_dir, case_split, shape_option, num_sub, target_time)
+            mean, std = compute_xrf55_mean_std(root_dir, case_split, shape_option, num_sub, target_time,
+                                               split_mode=split_mode)
 
         train_dataset = XRF55Dataset(
             root_dir=root_dir,
             split="train",
             case_split=case_split,
+            split_mode=split_mode,
             shape_option=shape_option,
             num_sub=num_sub,
             normalize=normalize,
@@ -1080,6 +1159,7 @@ def load_dataset(
             root_dir=root_dir,
             split="test",
             case_split=case_split,
+            split_mode=split_mode,
             shape_option=shape_option,
             num_sub=num_sub,
             normalize=normalize,
@@ -1102,7 +1182,7 @@ def load_dataset(
                 f"[{name}] {split_name} split is empty (0 samples). "
                 f"Check --data_root='{root_dir}' (files must exist under it, "
                 f"named as expected), the allowed labels {tuple(allowed_labels)}, "
-                f"and the split mode (SPLIT_BY_REPEAT={SPLIT_BY_REPEAT}, "
+                f"and the split mode (split_mode={split_mode}, "
                 f"case_split={case_split})."
             )
 
