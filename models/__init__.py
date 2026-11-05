@@ -7,7 +7,6 @@ from .resnet1d import resnet18_1d
 from .bilstm import BiLSTM
 from .vit import ViT
 from .cnn_gru import CNN_GRU
-from .bimamba import BiMamba
 from .wiformer import WiFormer
 
 SUPPORTED_MODELS = [
@@ -18,7 +17,6 @@ SUPPORTED_MODELS = [
     "resnet18",
     "resnet1d",
     "cnn_gru",
-    "bimamba",
     "wiformer",
 ]
 
@@ -71,13 +69,6 @@ def get_model(model_name, input_shape, num_classes, **kwargs):
 
     if model_name == "cnn_gru":
         return CNN_GRU(
-            input_shape=input_shape,
-            num_classes=num_classes,
-            **kwargs,
-        )
-
-    if model_name == "bimamba":
-        return BiMamba(
             input_shape=input_shape,
             num_classes=num_classes,
             **kwargs,

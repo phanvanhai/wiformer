@@ -84,7 +84,6 @@ def parse_args():
             "resnet18",
             "resnet1d",
             "cnn_gru",
-            "bimamba",
             "wiformer",
         ],
         help="Model name",
@@ -280,9 +279,6 @@ def main():
     # --------------------------------------------------------
     dataset_kwargs = {}
     dataset_kwargs["case_split"] = args.case_split
-
-    if args.model == "bimamba":
-        dataset_kwargs["target_time"] = 250
 
     if args.model == "cnn_gru":
         train_loader, test_loader, info = load_dataset(

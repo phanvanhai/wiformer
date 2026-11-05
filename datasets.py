@@ -911,7 +911,7 @@ def load_dataset(
 ):
     """
     Added kwargs to support passing specific split definitions 
-    like case_split for XRF55, shape_option for CNN models, and target_time for bimamba.
+    like case_split for XRF55, shape_option for CNN models, and target_time for time resampling.
     """
 
     name = name.lower()
