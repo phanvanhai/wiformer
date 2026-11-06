@@ -10,12 +10,16 @@ Examples
 # list variants
 python ablation.py --list
 
-# all variants on xrf55 (split by repetition)
+# main ablation (remove one block at a time) on xrf55 - default --set core
 python ablation.py --data_root=".\\data\\" --dataset=xrf55
+
+# design-choice variants / everything
+python ablation.py --data_root=".\\data\\" --dataset=xrf55 --set design
+python ablation.py --data_root=".\\data\\" --dataset=xrf55 --set all
 
 # only a few variants, cross-user case 2, 50 epochs
 python ablation.py --data_root=".\\data\\" --dataset=sshar_esp ^
-    --variants full k1_time k1_freq --extra --split_mode=user --case_split=2 --epochs=50
+    --variants full wo_fft wo_conv --extra --split_mode=user --case_split=2 --epochs=50
 
 # only rebuild the summary table from finished runs
 python ablation.py --dataset=xrf55 --summary_only
@@ -30,23 +34,31 @@ import sys
 
 # name -> (group, description, extra CLI args for main.py)
 # Every variant changes exactly ONE thing w.r.t. "full".
-VARIANTS = {
-    "full": ("Full", "CSI-WiFormer (default)", []),
 
-    # --- Block 1: Conv1d || FFT ---
-    "k1_time": ("Block 1", "Conv1d only (no FFT branch)", ["--k1_branch=time"]),
-    "k1_freq": ("Block 1", "FFT only (no Conv1d branch)", ["--k1_branch=freq"]),
+# ---- Main ablation: remove one block at a time ----
+# A removed block is replaced by the simplest op that keeps the tensor shape:
+#   Block 1 -> Linear(W, D) on the raw window
+#   Block 2 -> mean over the Rx x Sub tokens
+#   Block 3 -> mean over the windows
+CORE_VARIANTS = {
+    "full": ("Full", "CSI-WiFormer (all blocks)", []),
+    "wo_fft": ("Block 1", "w/o FFT branch (Conv1d only)", ["--k1_branch=time"]),
+    "wo_conv": ("Block 1", "w/o Conv1d branch (FFT only)", ["--k1_branch=freq"]),
+    "wo_block1": ("Block 1", "w/o Block 1 (Linear(W,D) on raw window)", ["--k1_branch=none"]),
+    "wo_block2": ("Block 2", "w/o Block 2 (mean over Rx x Sub)", ["--k2_mode=pool"]),
+    "wo_block3": ("Block 3", "w/o Block 3 (mean over windows)", ["--k3_layers=0"]),
+}
 
+# ---- Optional: design choices inside each block ----
+DESIGN_VARIANTS = {
     # --- Block 2: Rx x Sub attention ---
     "k2_per_rx": ("Block 2", "Attention per Rx (no cross-Rx), mean over Rx", ["--k2_mode=per_rx"]),
-    "k2_pool": ("Block 2", "No Block 2: mean pooling over Rx x Sub", ["--k2_mode=pool"]),
     "k2_pe_none": ("Block 2", "No PE_sub", ["--k2_pe=none"]),
     "k2_pe_rx_sub": ("Block 2", "PE_sub + PE_rx", ["--k2_pe=rx_sub"]),
 
     # --- Block 3: temporal Transformer ---
     "k3_learned": ("Block 3", "Learned absolute PE instead of ALiBi", ["--k3_pos=learned"]),
     "k3_nopos": ("Block 3", "No positional info (no ALiBi)", ["--k3_pos=none"]),
-    "k3_pool": ("Block 3", "No Block 3: mean pooling over windows", ["--k3_layers=0"]),
 
     # --- Depth ---
     "k2_l1": ("Depth", "Block 2: 1 layer", ["--k2_layers=1"]),
@@ -57,6 +69,14 @@ VARIANTS = {
     "all_ant": ("Input", "All antennas as views (R x A)", ["--ant_mode=all"]),
     "win32": ("Input", "Window 32 / stride 16", ["--window=32", "--stride=16"]),
     "win128": ("Input", "Window 128 / stride 64", ["--window=128", "--stride=64"]),
+}
+
+VARIANTS = {**CORE_VARIANTS, **DESIGN_VARIANTS}
+SETS = {
+    "core": list(CORE_VARIANTS),
+    # "full" is kept so the summary can compute delta_acc
+    "design": ["full", *DESIGN_VARIANTS],
+    "all": list(VARIANTS),
 }
 
 METRIC_KEYS = [
@@ -71,8 +91,11 @@ def parse_args():
                    choices=["ut_har", "xrf55", "sshar_esp", "sshar_asus"])
     p.add_argument("--data_root", type=str, default=None)
     p.add_argument("--result_root", type=str, default="results/ablation")
+    p.add_argument("--set", type=str, default="core", choices=list(SETS),
+                   help="core = remove one block at a time (default), "
+                        "design = design choices inside blocks, all = both")
     p.add_argument("--variants", nargs="+", default=None,
-                   help="Subset of variants (default: all)")
+                   help="Explicit list of variants (overrides --set)")
     p.add_argument("--skip_done", action="store_true",
                    help="Skip variants whose metrics.json already has accuracy")
     p.add_argument("--summary_only", action="store_true")
@@ -112,7 +135,7 @@ def run_variant(args, name):
     return subprocess.run(cmd).returncode
 
 
-def summarize(result_root, dataset, names):
+def summarize(result_root, dataset, names, tag):
     rows = []
     full_acc = None
     for name in names:
@@ -137,7 +160,7 @@ def summarize(result_root, dataset, names):
     for r in rows:
         r["delta_acc"] = None if full_acc is None else r["accuracy"] - full_acc
 
-    out = os.path.join(result_root, f"ablation_{dataset}.csv")
+    out = os.path.join(result_root, f"ablation_{dataset}_{tag}.csv")
     os.makedirs(result_root, exist_ok=True)
     fields = ["variant", "group", "description", *METRIC_KEYS, "delta_acc"]
     with open(out, "w", newline="", encoding="utf-8") as fh:
@@ -145,7 +168,7 @@ def summarize(result_root, dataset, names):
         w.writeheader()
         w.writerows(rows)
 
-    print(f"\nAblation summary - {dataset}")
+    print(f"\nAblation summary - {dataset} ({tag})")
     print(f"{'variant':<14}{'group':<9}{'acc':>8}{'Δacc':>8}{'F1':>8}{'params':>10}  description")
     for r in rows:
         d = "" if r["delta_acc"] is None else f"{100 * r['delta_acc']:+.2f}"
@@ -160,14 +183,18 @@ def main():
     args = parse_args()
 
     if args.list:
-        for name, (group, desc, cli) in VARIANTS.items():
-            print(f"{name:<14}{group:<9}{desc:<48}{' '.join(cli)}")
+        for title, table in (("core (remove one block at a time)", CORE_VARIANTS),
+                             ("design (choices inside blocks)", DESIGN_VARIANTS)):
+            print(f"[{title}]")
+            for name, (group, desc, cli) in table.items():
+                print(f"  {name:<14}{group:<9}{desc:<48}{' '.join(cli)}")
         return
 
     if args.dataset is None:
         sys.exit("--dataset is required")
 
-    names = args.variants or list(VARIANTS)
+    names = args.variants or SETS[args.set]
+    tag = "custom" if args.variants else args.set
     unknown = [n for n in names if n not in VARIANTS]
     if unknown:
         sys.exit(f"Unknown variants: {unknown}. Use --list.")
@@ -185,7 +212,7 @@ def main():
         if failed:
             print(f"\nFailed variants: {failed}")
 
-    summarize(args.result_root, args.dataset, names)
+    summarize(args.result_root, args.dataset, names, tag)
 
 
 if __name__ == "__main__":

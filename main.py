@@ -259,8 +259,8 @@ def parse_args():
         "--k1_branch",
         type=str,
         default="both",
-        choices=["both", "time", "freq"],
-        help="WiFormer Block 1 branches: Conv1d+FFT (both), Conv1d only (time), FFT only (freq)",
+        choices=["both", "time", "freq", "none"],
+        help="WiFormer Block 1 branches: Conv1d+FFT (both), Conv1d only (time), FFT only (freq), no Block 1 = Linear(W, D) on the raw window (none)",
     )
 
     # ---- WiFormer ablation knobs (defaults = full model) ----

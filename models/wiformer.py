@@ -108,14 +108,13 @@ class SubFeatureExtractor(nn.Module):
     - fuse     : Linear(2D, D) on [v_time || v_freq]
 
     use_time / use_freq allow ablation (a disabled branch is not built;
-    the fuse layer then maps D -> D).
+    the fuse layer then maps D -> D). With both disabled, Block 1 is removed
+    and replaced by a plain Linear(W, D) patch embedding of the raw window.
     """
 
     def __init__(self, d_model=64, feat=64, window=64, stride=32,
                  use_time=True, use_freq=True):
         super().__init__()
-        if not (use_time or use_freq):
-            raise ValueError("SubFeatureExtractor: enable at least one branch")
         self.window = window
         self.stride = stride
         self.d_model = d_model
@@ -141,7 +140,11 @@ class SubFeatureExtractor(nn.Module):
 
         # Fuse [v_time || v_freq] -> D  (single branch: Linear(D, D))
         n_branch = int(use_time) + int(use_freq)
-        self.fuse = nn.Linear(n_branch * d_model, d_model)
+        if n_branch > 0:
+            self.fuse = nn.Linear(n_branch * d_model, d_model)
+        else:
+            # Block 1 removed: raw window -> D
+            self.proj_raw = nn.Linear(window, d_model)
 
     def forward(self, x):
         # x: (B, N_rx, N_sub, T)
@@ -166,7 +169,10 @@ class SubFeatureExtractor(nn.Module):
             feats.append(self.proj_freq(x_f))                  # (N, D)
 
         # --- fuse ---
-        out = self.fuse(torch.cat(feats, dim=-1))              # (N, D)
+        if feats:
+            out = self.fuse(torch.cat(feats, dim=-1))          # (N, D)
+        else:
+            out = self.proj_raw(x)                             # (N, D)
         return out.reshape(B, R, n_win, S, -1)               # (B, R, n_win, S, D)
 
 
@@ -409,8 +415,8 @@ class WiFormer(BaseModel):
             raise ValueError(f"WiFormer: T={T} < window={window}")
         self.n_win = (T - window) // stride + 1
 
-        if k1_branch not in ("both", "time", "freq"):
-            raise ValueError(f"WiFormer: k1_branch must be both/time/freq, got '{k1_branch}'")
+        if k1_branch not in ("both", "time", "freq", "none"):
+            raise ValueError(f"WiFormer: k1_branch must be both/time/freq/none, got '{k1_branch}'")
         self.block1 = SubFeatureExtractor(
             d_model, feat, window, stride,
             use_time=k1_branch in ("both", "time"),
