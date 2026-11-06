@@ -107,7 +107,8 @@ class SubFeatureExtractor(nn.Module):
     - spectral : rfft -> log1p|X| -> drop DC -> Linear(W//2, D)   -> v_freq
     - fuse     : Linear(2D, D) on [v_time || v_freq]
 
-    use_time / use_freq allow ablation (a disabled branch contributes zeros).
+    use_time / use_freq allow ablation (a disabled branch is not built;
+    the fuse layer then maps D -> D).
     """
 
     def __init__(self, d_model=64, feat=64, window=64, stride=32,
@@ -122,22 +123,25 @@ class SubFeatureExtractor(nn.Module):
         self.use_freq = use_freq
 
         # Branch 1: temporal (Conv1d stack)
-        self.encoder = nn.Sequential(
-            nn.Conv1d(1, 32, kernel_size=8, stride=2, padding=3),     # 64 -> 32
-            nn.BatchNorm1d(32),
-            nn.GELU(),
-            nn.Conv1d(32, feat, kernel_size=4, stride=2, padding=1),  # 32 -> 16
-            nn.BatchNorm1d(feat),
-            nn.GELU(),
-            nn.AdaptiveAvgPool1d(1),                                  # 16 -> 1
-        )
-        self.proj_time = nn.Linear(feat, d_model)
+        if use_time:
+            self.encoder = nn.Sequential(
+                nn.Conv1d(1, 32, kernel_size=8, stride=2, padding=3),     # 64 -> 32
+                nn.BatchNorm1d(32),
+                nn.GELU(),
+                nn.Conv1d(32, feat, kernel_size=4, stride=2, padding=1),  # 32 -> 16
+                nn.BatchNorm1d(feat),
+                nn.GELU(),
+                nn.AdaptiveAvgPool1d(1),                                  # 16 -> 1
+            )
+            self.proj_time = nn.Linear(feat, d_model)
 
         # Branch 2: spectral (FFT). rfft(W) -> W//2+1 bins, drop DC -> W//2
-        self.proj_freq = nn.Linear(window // 2, d_model)
+        if use_freq:
+            self.proj_freq = nn.Linear(window // 2, d_model)
 
-        # Fuse [v_time || v_freq] -> D
-        self.fuse = nn.Linear(2 * d_model, d_model)
+        # Fuse [v_time || v_freq] -> D  (single branch: Linear(D, D))
+        n_branch = int(use_time) + int(use_freq)
+        self.fuse = nn.Linear(n_branch * d_model, d_model)
 
     def forward(self, x):
         # x: (B, N_rx, N_sub, T)
@@ -147,26 +151,22 @@ class SubFeatureExtractor(nn.Module):
         n_win = x.shape[3]
         x = x.permute(0, 1, 3, 2, 4)                       # (B, R, n_win, S, W)
         x = x.reshape(B * R * n_win * S, self.window)      # (N, W), shared by both branches
-        N = x.shape[0]
+        feats = []
 
         # --- temporal ---
         if self.use_time:
             v_time = self.encoder(x.unsqueeze(1)).squeeze(-1)  # (N, F)
-            v_time = self.proj_time(v_time)                    # (N, D)
-        else:
-            v_time = x.new_zeros(N, self.d_model)
+            feats.append(self.proj_time(v_time))               # (N, D)
 
         # --- spectral ---
         if self.use_freq:
             # FFT in float32 (rfft does not support half on all backends)
             x_f = torch.fft.rfft(x.float(), dim=-1)            # (N, W//2+1) complex
             x_f = torch.log1p(x_f.abs())[:, 1:].to(x.dtype)    # drop DC -> (N, W//2)
-            v_freq = self.proj_freq(x_f)                       # (N, D)
-        else:
-            v_freq = x.new_zeros(N, self.d_model)
+            feats.append(self.proj_freq(x_f))                  # (N, D)
 
         # --- fuse ---
-        out = self.fuse(torch.cat([v_time, v_freq], dim=-1))  # (N, D)
+        out = self.fuse(torch.cat(feats, dim=-1))              # (N, D)
         return out.reshape(B, R, n_win, S, -1)               # (B, R, n_win, S, D)
 
 
@@ -174,6 +174,17 @@ class SubFeatureExtractor(nn.Module):
 # Block 2 - Joint (Rx x Sub) attention per window (PE_sub only)
 # ============================================================
 class JointRxSubAttention(nn.Module):
+    """
+    Ablation knobs
+    --------------
+    mode : "joint"  - attention over all R*S tokens of a window (default)
+           "per_rx" - attention over the S tokens of each Rx, then mean of the R CLS
+           "pool"   - no attention: mean over the R*S tokens (also when n_layers=0)
+    pe   : "sub"    - PE_sub only (default)
+           "rx_sub" - PE_sub + learnable PE_rx
+           "none"   - no positional embedding
+    """
+
     def __init__(
         self,
         n_sub,
@@ -184,33 +195,70 @@ class JointRxSubAttention(nn.Module):
         dropout=0.1,
         activation="gelu",
         norm_first=True,
+        n_rx=None,
+        mode="joint",
+        pe="sub",
     ):
         super().__init__()
         assert d_model % 2 == 0
+        if mode not in ("joint", "per_rx", "pool"):
+            raise ValueError(f"k2_mode must be joint/per_rx/pool, got '{mode}'")
+        if pe not in ("sub", "rx_sub", "none"):
+            raise ValueError(f"k2_pe must be sub/rx_sub/none, got '{pe}'")
+        if n_layers == 0:
+            mode = "pool"
         self.n_sub = n_sub
+        self.mode = mode
+        self.pe = pe
 
-        # PE_sub: Embedding(N_sub, D/2) -> Linear(D/2, D). No PE_rx.
-        self.embed_sub = nn.Embedding(n_sub, d_model // 2)
-        self.pe_proj = nn.Linear(d_model // 2, d_model)
+        # PE_sub: Embedding(N_sub, D/2) -> Linear(D/2, D).
+        if pe in ("sub", "rx_sub"):
+            self.embed_sub = nn.Embedding(n_sub, d_model // 2)
+            self.pe_proj = nn.Linear(d_model // 2, d_model)
+        if pe == "rx_sub":
+            if n_rx is None:
+                raise ValueError("k2_pe=rx_sub needs n_rx")
+            self.embed_rx = nn.Embedding(n_rx, d_model)
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
-        self.attn_layer = nn.TransformerEncoder(
-            make_encoder_layer(
-                d_model, n_heads, dim_ff, dropout, activation, norm_first
-            ),
-            num_layers=n_layers,
-            enable_nested_tensor=False,
-        )
+        if mode != "pool":
+            self.attn_layer = nn.TransformerEncoder(
+                make_encoder_layer(
+                    d_model, n_heads, dim_ff, dropout, activation, norm_first
+                ),
+                num_layers=n_layers,
+                enable_nested_tensor=False,
+            )
+
+    def _pos(self, R, S, device):
+        # (R*S, D) or None
+        if self.pe == "none":
+            return None
+        sub_idx = torch.arange(S, device=device)
+        pe = self.pe_proj(self.embed_sub(sub_idx))          # (S, D)
+        pe = pe.unsqueeze(0).expand(R, -1, -1)              # (R, S, D)
+        if self.pe == "rx_sub":
+            rx_idx = torch.arange(R, device=device)
+            pe = pe + self.embed_rx(rx_idx).unsqueeze(1)
+        return pe.reshape(R * S, -1)
 
     def forward(self, x):
         # x: (B, R, n_win, S, D)
         B, R, n_win, S, D = x.shape
         x = x.permute(0, 2, 1, 3, 4).reshape(B * n_win, R * S, D)
 
-        sub_idx = torch.arange(S, device=x.device)
-        pe = self.pe_proj(self.embed_sub(sub_idx))          # (S, D)
-        pe = pe.unsqueeze(0).expand(R, -1, -1).reshape(R * S, D)
-        x = x + pe.unsqueeze(0)                             # broadcast B*n_win
+        pe = self._pos(R, S, x.device)
+        if pe is not None:
+            x = x + pe.unsqueeze(0)                         # broadcast B*n_win
+
+        if self.mode == "pool":
+            return x.mean(dim=1).reshape(B, n_win, D)
+
+        if self.mode == "per_rx":
+            x = x.reshape(B * n_win * R, S, D)
+            cls = self.cls_token.expand(x.shape[0], -1, -1)
+            x = self.attn_layer(torch.cat([cls, x], dim=1))
+            return x[:, 0].reshape(B, n_win, R, D).mean(dim=2)
 
         cls = self.cls_token.expand(B * n_win, -1, -1)
         x = torch.cat([cls, x], dim=1)                      # (B*n_win, 1+R*S, D)
@@ -226,6 +274,15 @@ def get_alibi_slopes(n_heads):
 
 
 class TemporalTransformer(nn.Module):
+    """
+    Ablation knobs
+    --------------
+    pos : "alibi"   - ALiBi bias (default)
+          "learned" - learnable absolute PE added to the tokens (incl. CLS)
+          "none"    - no positional information
+    n_layers = 0    - no Transformer: mean over the n_win window tokens
+    """
+
     def __init__(
         self,
         d_model=64,
@@ -235,17 +292,28 @@ class TemporalTransformer(nn.Module):
         dropout=0.1,
         activation="gelu",
         norm_first=True,
+        pos="alibi",
+        max_len=None,
     ):
         super().__init__()
+        if pos not in ("alibi", "learned", "none"):
+            raise ValueError(f"k3_pos must be alibi/learned/none, got '{pos}'")
         self.n_heads = n_heads
+        self.n_layers = n_layers
+        self.pos = pos
         self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
-        self.encoder = nn.TransformerEncoder(
-            make_encoder_layer(
-                d_model, n_heads, dim_ff, dropout, activation, norm_first
-            ),
-            num_layers=n_layers,
-            enable_nested_tensor=False,
-        )
+        if n_layers > 0:
+            self.encoder = nn.TransformerEncoder(
+                make_encoder_layer(
+                    d_model, n_heads, dim_ff, dropout, activation, norm_first
+                ),
+                num_layers=n_layers,
+                enable_nested_tensor=False,
+            )
+            if pos == "learned":
+                if max_len is None:
+                    raise ValueError("k3_pos=learned needs max_len")
+                self.pos_embed = nn.Parameter(torch.zeros(1, max_len, d_model))
         self.register_buffer(
             "alibi_slopes", get_alibi_slopes(n_heads), persistent=False
         )
@@ -258,14 +326,21 @@ class TemporalTransformer(nn.Module):
 
     def forward(self, x):
         # x: (B, n_win, D)
+        if self.n_layers == 0:
+            return x.mean(dim=1)                            # (B, D)
+
         B = x.shape[0]
         cls = self.cls_token.expand(B, -1, -1)
         x = torch.cat([cls, x], dim=1)                      # (B, 1+n_win, D)
         L = x.shape[1]
 
-        alibi = self.build_alibi_bias(L, x.device, x.dtype)  # (H, L, L)
-        # nn.MultiheadAttention float mask: (B*H, L, L), batch-major
-        mask = alibi.unsqueeze(0).expand(B, -1, -1, -1).reshape(B * self.n_heads, L, L)
+        mask = None
+        if self.pos == "alibi":
+            alibi = self.build_alibi_bias(L, x.device, x.dtype)  # (H, L, L)
+            # nn.MultiheadAttention float mask: (B*H, L, L), batch-major
+            mask = alibi.unsqueeze(0).expand(B, -1, -1, -1).reshape(B * self.n_heads, L, L)
+        elif self.pos == "learned":
+            x = x + self.pos_embed[:, :L]
 
         x = self.encoder(x, mask=mask)
         return x[:, 0]                                      # (B, D)
@@ -298,6 +373,10 @@ class WiFormer(BaseModel):
         norm_first=True,
         sample_norm=True,
         k1_branch="both",
+        k2_mode="joint",
+        k2_pe="sub",
+        k3_pos="alibi",
+        ant_mode="first",
         **kwargs,
     ):
         super().__init__(input_shape=input_shape, num_classes=num_classes)
@@ -313,6 +392,11 @@ class WiFormer(BaseModel):
             )
         self.n_rx, self.n_ant, self.n_sub = n_rx, n_ant, n_sub
         self.sample_norm = sample_norm
+        if ant_mode not in ("first", "all"):
+            raise ValueError(f"WiFormer: ant_mode must be first/all, got '{ant_mode}'")
+        self.ant_mode = ant_mode
+        # "all": every (rx, antenna) pair is its own view -> R' = R * A
+        n_view = n_rx * n_ant if ant_mode == "all" else n_rx
 
         T = input_shape[-1]
         n_channels = math.prod(input_shape[:-1])
@@ -333,10 +417,12 @@ class WiFormer(BaseModel):
             use_freq=k1_branch in ("both", "freq"),
         )
         self.block2 = JointRxSubAttention(
-            n_sub, d_model, k2_heads, k2_layers, k2_ff, dropout, activation, norm_first
+            n_sub, d_model, k2_heads, k2_layers, k2_ff, dropout, activation, norm_first,
+            n_rx=n_view, mode=k2_mode, pe=k2_pe,
         )
         self.block3 = TemporalTransformer(
-            d_model, k3_heads, k3_layers, k3_ff, dropout, activation, norm_first
+            d_model, k3_heads, k3_layers, k3_ff, dropout, activation, norm_first,
+            pos=k3_pos, max_len=self.n_win + 1,
         )
         self.classifier = nn.Sequential(
             nn.LayerNorm(d_model),
@@ -366,12 +452,17 @@ class WiFormer(BaseModel):
                 nn.init.zeros_(m.in_proj_bias)
         nn.init.trunc_normal_(self.block2.cls_token, std=0.02)
         nn.init.trunc_normal_(self.block3.cls_token, std=0.02)
+        if hasattr(self.block3, "pos_embed"):
+            nn.init.trunc_normal_(self.block3.pos_embed, std=0.02)
 
     def preprocess(self, x):
         # (B, C, T) / (B, R*A, S, T) / (B, R, A, S, T) -> (B, R, S, T)
         B, T = x.shape[0], x.shape[-1]
         x = x.reshape(B, self.n_rx, self.n_ant, self.n_sub, T)
-        x = x[:, :, 0]                                      # antenna[0] of each RX
+        if self.ant_mode == "all":
+            x = x.reshape(B, self.n_rx * self.n_ant, self.n_sub, T)
+        else:
+            x = x[:, :, 0]                                  # antenna[0] of each RX
         if self.sample_norm:
             # z-score per (rx, sub) per sample, along time
             mean = x.mean(dim=-1, keepdim=True)

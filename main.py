@@ -5,6 +5,7 @@ WiFi HAR Benchmark
 """
 
 import argparse
+import json
 import os
 import random
 import time
@@ -262,6 +263,49 @@ def parse_args():
         help="WiFormer Block 1 branches: Conv1d+FFT (both), Conv1d only (time), FFT only (freq)",
     )
 
+    # ---- WiFormer ablation knobs (defaults = full model) ----
+    parser.add_argument(
+        "--k2_mode",
+        type=str,
+        default="joint",
+        choices=["joint", "per_rx", "pool"],
+        help="WiFormer Block 2: joint Rx x Sub attention / attention per Rx then mean / mean pooling",
+    )
+    parser.add_argument(
+        "--k2_pe",
+        type=str,
+        default="sub",
+        choices=["sub", "rx_sub", "none"],
+        help="WiFormer Block 2 positional embedding",
+    )
+    parser.add_argument(
+        "--k3_pos",
+        type=str,
+        default="alibi",
+        choices=["alibi", "learned", "none"],
+        help="WiFormer Block 3 positional encoding (k3_layers=0 -> mean pooling over windows)",
+    )
+    parser.add_argument(
+        "--ant_mode",
+        type=str,
+        default="first",
+        choices=["first", "all"],
+        help="WiFormer: keep antenna[0] of each Rx, or use every (rx, antenna) as a view",
+    )
+    parser.add_argument(
+        "--no_sample_norm",
+        action="store_true",
+        help="WiFormer: disable per-sample z-score",
+    )
+    parser.add_argument("--window", type=int, default=64, help="WiFormer window W")
+    parser.add_argument("--stride", type=int, default=32, help="WiFormer stride")
+    parser.add_argument(
+        "--run_name",
+        type=str,
+        default="",
+        help="Suffix of the result folder: <dataset>_<model>[_<run_name>]",
+    )
+
     parser.add_argument(
             "--case_split",
             type=int,
@@ -404,6 +448,13 @@ def main():
             k2_layers=args.k2_layers,
             k3_layers=args.k3_layers,
             k1_branch=args.k1_branch,
+            k2_mode=args.k2_mode,
+            k2_pe=args.k2_pe,
+            k3_pos=args.k3_pos,
+            ant_mode=args.ant_mode,
+            sample_norm=not args.no_sample_norm,
+            window=args.window,
+            stride=args.stride,
         )
 
     model = get_model(
@@ -455,14 +506,19 @@ def main():
     # --------------------------------------------------------
     # Result folder
     # --------------------------------------------------------
+    run_dir = f"{args.dataset}_{args.model}"
+    if args.run_name:
+        run_dir += f"_{args.run_name}"
     save_dir = os.path.join(
         args.result_root,
-        f"{args.dataset}_{args.model}",
+        run_dir,
     )
     os.makedirs(
         save_dir,
         exist_ok=True,
     )
+    with open(os.path.join(save_dir, "config.json"), "w", encoding="utf-8") as f:
+        json.dump(vars(args), f, indent=4)
     # --------------------------------------------------------
     # Count and save model complexity before training
     # --------------------------------------------------------
