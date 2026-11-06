@@ -175,22 +175,31 @@ class UTHARDataset(Dataset):
 
     # --------------------------------------------------------
 
-    def load_data(self):
-        data_file = (
-            self.root_dir /
-            "UT_HAR" /
-            "data" /
-            f"X_{self.split}.csv"
+    def _find_ut_har_dir(self):
+        """
+        Locate the folder that contains data/X_{split}.csv and label/y_{split}.csv.
+        Accepts root_dir pointing at the parent of UT_HAR, at UT_HAR itself,
+        or anywhere above it (e.g. a Kaggle input dir with nested folders).
+        """
+        fname = f"X_{self.split}.csv"
+        for cand in (self.root_dir / "UT_HAR", self.root_dir):
+            if (cand / "data" / fname).exists():
+                return cand
+
+        if self.root_dir.exists():
+            for hit in sorted(self.root_dir.rglob(fname)):
+                if hit.parent.name == "data":
+                    return hit.parent.parent
+
+        raise FileNotFoundError(
+            f"Could not find data/{fname} under '{self.root_dir}'. "
+            f"Check --data_root (it should point at the UT_HAR folder or one of its parents)."
         )
 
-        label_file = (
-            self.root_dir /
-            "UT_HAR" /
-            "label" /
-            f"y_{self.split}.csv"
-        )
-        if not data_file.exists():
-            raise FileNotFoundError(data_file)
+    def load_data(self):
+        base = self._find_ut_har_dir()
+        data_file = base / "data" / f"X_{self.split}.csv"
+        label_file = base / "label" / f"y_{self.split}.csv"
 
         if not label_file.exists():
             raise FileNotFoundError(label_file)

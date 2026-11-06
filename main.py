@@ -255,6 +255,14 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--k1_branch",
+        type=str,
+        default="both",
+        choices=["both", "time", "freq"],
+        help="WiFormer Block 1 branches: Conv1d+FFT (both), Conv1d only (time), FFT only (freq)",
+    )
+
+    parser.add_argument(
             "--case_split",
             type=int,
             default=0,
@@ -395,6 +403,7 @@ def main():
         model_kwargs.update(
             k2_layers=args.k2_layers,
             k3_layers=args.k3_layers,
+            k1_branch=args.k1_branch,
         )
 
     model = get_model(

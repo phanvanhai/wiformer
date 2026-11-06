@@ -11,7 +11,7 @@ Pipeline
 --------
 select antenna[0]  -> (B, N_rx, N_sub, T)
 per-sample z-score -> (B, N_rx, N_sub, T)
-Block 1 : unfold(W, S) + shared Conv1d stack -> (B, N_rx, n_win, N_sub, D)
+Block 1 : unfold(W, S) + [Conv1d branch || FFT branch] -> fuse -> (B, N_rx, n_win, N_sub, D)
 Block 2 : joint (Rx x Sub) attention per window, PE_sub only, CLS -> (B, n_win, D)
 Block 3 : CLS + ALiBi temporal Transformer -> (B, D)
 Classifier : LayerNorm -> Dropout -> Linear -> logits
@@ -99,12 +99,29 @@ def make_encoder_layer(d_model, n_heads, dim_ff, dropout, activation, norm_first
 # Block 1 - Sub feature extractor
 # ============================================================
 class SubFeatureExtractor(nn.Module):
-    """Shared Conv1d stack applied to every (rx, window, sub) of length W."""
+    """
+    Two parallel branches on every (rx, window, sub) segment of length W,
+    fused back to D (see CSI-WiFormer_Block1_FFT.md):
 
-    def __init__(self, d_model=64, feat=64, window=64, stride=32):
+    - temporal : shared Conv1d stack -> Linear(feat, D)          -> v_time
+    - spectral : rfft -> log1p|X| -> drop DC -> Linear(W//2, D)   -> v_freq
+    - fuse     : Linear(2D, D) on [v_time || v_freq]
+
+    use_time / use_freq allow ablation (a disabled branch contributes zeros).
+    """
+
+    def __init__(self, d_model=64, feat=64, window=64, stride=32,
+                 use_time=True, use_freq=True):
         super().__init__()
+        if not (use_time or use_freq):
+            raise ValueError("SubFeatureExtractor: enable at least one branch")
         self.window = window
         self.stride = stride
+        self.d_model = d_model
+        self.use_time = use_time
+        self.use_freq = use_freq
+
+        # Branch 1: temporal (Conv1d stack)
         self.encoder = nn.Sequential(
             nn.Conv1d(1, 32, kernel_size=8, stride=2, padding=3),     # 64 -> 32
             nn.BatchNorm1d(32),
@@ -114,7 +131,13 @@ class SubFeatureExtractor(nn.Module):
             nn.GELU(),
             nn.AdaptiveAvgPool1d(1),                                  # 16 -> 1
         )
-        self.proj = nn.Linear(feat, d_model)
+        self.proj_time = nn.Linear(feat, d_model)
+
+        # Branch 2: spectral (FFT). rfft(W) -> W//2+1 bins, drop DC -> W//2
+        self.proj_freq = nn.Linear(window // 2, d_model)
+
+        # Fuse [v_time || v_freq] -> D
+        self.fuse = nn.Linear(2 * d_model, d_model)
 
     def forward(self, x):
         # x: (B, N_rx, N_sub, T)
@@ -123,10 +146,28 @@ class SubFeatureExtractor(nn.Module):
         # (B, R, S, n_win, W)
         n_win = x.shape[3]
         x = x.permute(0, 1, 3, 2, 4)                       # (B, R, n_win, S, W)
-        x = x.reshape(B * R * n_win * S, 1, self.window)
-        x = self.encoder(x).squeeze(-1)                    # (*, F)
-        x = self.proj(x)                                   # (*, D)
-        return x.reshape(B, R, n_win, S, -1)               # (B, R, n_win, S, D)
+        x = x.reshape(B * R * n_win * S, self.window)      # (N, W), shared by both branches
+        N = x.shape[0]
+
+        # --- temporal ---
+        if self.use_time:
+            v_time = self.encoder(x.unsqueeze(1)).squeeze(-1)  # (N, F)
+            v_time = self.proj_time(v_time)                    # (N, D)
+        else:
+            v_time = x.new_zeros(N, self.d_model)
+
+        # --- spectral ---
+        if self.use_freq:
+            # FFT in float32 (rfft does not support half on all backends)
+            x_f = torch.fft.rfft(x.float(), dim=-1)            # (N, W//2+1) complex
+            x_f = torch.log1p(x_f.abs())[:, 1:].to(x.dtype)    # drop DC -> (N, W//2)
+            v_freq = self.proj_freq(x_f)                       # (N, D)
+        else:
+            v_freq = x.new_zeros(N, self.d_model)
+
+        # --- fuse ---
+        out = self.fuse(torch.cat([v_time, v_freq], dim=-1))  # (N, D)
+        return out.reshape(B, R, n_win, S, -1)               # (B, R, n_win, S, D)
 
 
 # ============================================================
@@ -256,6 +297,7 @@ class WiFormer(BaseModel):
         activation="gelu",
         norm_first=True,
         sample_norm=True,
+        k1_branch="both",
         **kwargs,
     ):
         super().__init__(input_shape=input_shape, num_classes=num_classes)
@@ -283,7 +325,13 @@ class WiFormer(BaseModel):
             raise ValueError(f"WiFormer: T={T} < window={window}")
         self.n_win = (T - window) // stride + 1
 
-        self.block1 = SubFeatureExtractor(d_model, feat, window, stride)
+        if k1_branch not in ("both", "time", "freq"):
+            raise ValueError(f"WiFormer: k1_branch must be both/time/freq, got '{k1_branch}'")
+        self.block1 = SubFeatureExtractor(
+            d_model, feat, window, stride,
+            use_time=k1_branch in ("both", "time"),
+            use_freq=k1_branch in ("both", "freq"),
+        )
         self.block2 = JointRxSubAttention(
             n_sub, d_model, k2_heads, k2_layers, k2_ff, dropout, activation, norm_first
         )
