@@ -281,10 +281,10 @@ def compute_ut_har_mean_std(root_dir):
     total_count = 0
 
     n = len(dataset)
-    print(f"[XRF55] computing mean/std over {n} train samples ...")
+    print(f"[UT_HAR] computing mean/std over {n} train samples ...")
     for i, (x, _) in enumerate(dataset):
         if (i + 1) % 500 == 0 or i + 1 == n:
-            print(f"[XRF55]   mean/std {i + 1}/{n}")
+            print(f"[UT_HAR]   mean/std {i + 1}/{n}")
         x = x.numpy().astype(np.float64)
         total_sum += x.sum()
         total_sq += np.square(x).sum()
@@ -715,10 +715,23 @@ def compute_sshar_mean_std(dataset):
     total_count = 0
 
     n = len(dataset)
-    print(f"[XRF55] computing mean/std over {n} train samples ...")
+    if n == 0:
+        train_users = (
+            USER_CASES["sshar"][dataset.case_split]
+            if dataset.split_mode == "user" else None
+        )
+        raise ValueError(
+            f"[{type(dataset).__name__}] 0 train samples "
+            f"(split_mode={dataset.split_mode}, case_split={dataset.case_split}). "
+            f"Subjects found under {dataset.root_dir}/<room>/{dataset.device}/{dataset.rx_list[0]}: "
+            f"{dataset.subjects}; train users for this case: {train_users}. "
+            f"Check that the data contains subjects from the train list."
+        )
+    tag = f"[{type(dataset).__name__}]"
+    print(f"{tag} computing mean/std over {n} train samples ...")
     for i, (x, _) in enumerate(dataset):
         if (i + 1) % 500 == 0 or i + 1 == n:
-            print(f"[XRF55]   mean/std {i + 1}/{n}")
+            print(f"{tag}   mean/std {i + 1}/{n}")
         x = x.numpy().astype(np.float64)
         total_sum += x.sum()
         total_sq += np.square(x).sum()

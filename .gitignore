@@ -3,5 +3,6 @@ __pycache__/
 *.pth
 *.pt
 data/
+results/
 .vscode/
 .ipynb_checkpoints/
