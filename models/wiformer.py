@@ -110,10 +110,17 @@ class SubFeatureExtractor(nn.Module):
     use_time / use_freq allow ablation (a disabled branch is not built;
     the fuse layer then maps D -> D). With both disabled, Block 1 is removed
     and replaced by a plain Linear(W, D) patch embedding of the raw window.
+
+    Capacity knobs (temporal branch)
+    --------------------------------
+    n_conv : 2 (default) or 3 -- the 3rd Conv1d(feat, feat, 3) keeps length W/4
+    pool   : "avg"  -> global average over the W/4 steps (default, order-free)
+             "flatN" (e.g. "flat4") -> average to N steps, then flatten, so the
+             order inside the window survives (rising vs falling motion)
     """
 
     def __init__(self, d_model=64, feat=64, window=64, stride=32,
-                 use_time=True, use_freq=True):
+                 use_time=True, use_freq=True, n_conv=2, pool="avg"):
         super().__init__()
         self.window = window
         self.stride = stride
@@ -123,16 +130,32 @@ class SubFeatureExtractor(nn.Module):
 
         # Branch 1: temporal (Conv1d stack)
         if use_time:
-            self.encoder = nn.Sequential(
-                nn.Conv1d(1, 32, kernel_size=8, stride=2, padding=3),     # 64 -> 32
-                nn.BatchNorm1d(32),
+            if n_conv not in (2, 3):
+                raise ValueError(f"k1_conv must be 2 or 3, got {n_conv}")
+            if pool == "avg":
+                n_pool = 1
+            elif pool.startswith("flat") and pool[4:].isdigit():
+                n_pool = int(pool[4:])
+            else:
+                raise ValueError(f"k1_pool must be avg or flatN, got '{pool}'")
+            c1 = max(32, feat // 2)
+            layers = [
+                nn.Conv1d(1, c1, kernel_size=8, stride=2, padding=3),     # 64 -> 32
+                nn.BatchNorm1d(c1),
                 nn.GELU(),
-                nn.Conv1d(32, feat, kernel_size=4, stride=2, padding=1),  # 32 -> 16
+                nn.Conv1d(c1, feat, kernel_size=4, stride=2, padding=1),  # 32 -> 16
                 nn.BatchNorm1d(feat),
                 nn.GELU(),
-                nn.AdaptiveAvgPool1d(1),                                  # 16 -> 1
-            )
-            self.proj_time = nn.Linear(feat, d_model)
+            ]
+            if n_conv == 3:
+                layers += [
+                    nn.Conv1d(feat, feat, kernel_size=3, stride=1, padding=1),  # 16 -> 16
+                    nn.BatchNorm1d(feat),
+                    nn.GELU(),
+                ]
+            layers.append(nn.AdaptiveAvgPool1d(n_pool))                   # 16 -> n_pool
+            self.encoder = nn.Sequential(*layers)
+            self.proj_time = nn.Linear(feat * n_pool, d_model)
 
         # Branch 2: spectral (FFT). rfft(W) -> W//2+1 bins, drop DC -> W//2
         if use_freq:
@@ -158,7 +181,7 @@ class SubFeatureExtractor(nn.Module):
 
         # --- temporal ---
         if self.use_time:
-            v_time = self.encoder(x.unsqueeze(1)).squeeze(-1)  # (N, F)
+            v_time = self.encoder(x.unsqueeze(1)).flatten(1)   # (N, F * n_pool)
             feats.append(self.proj_time(v_time))               # (N, D)
 
         # --- spectral ---
@@ -368,12 +391,14 @@ class WiFormer(BaseModel):
         stride=32,
         d_model=64,
         feat=64,
+        k1_conv=2,
+        k1_pool="avg",
         k2_layers=2,
         k2_heads=4,
-        k2_ff=256,
+        k2_ff=None,
         k3_layers=4,
         k3_heads=4,
-        k3_ff=256,
+        k3_ff=None,
         dropout=0.1,
         activation="gelu",
         norm_first=True,
@@ -415,12 +440,20 @@ class WiFormer(BaseModel):
             raise ValueError(f"WiFormer: T={T} < window={window}")
         self.n_win = (T - window) // stride + 1
 
+        # FFN width defaults to 4 * D (= 256 for D = 64, as before)
+        k2_ff = k2_ff or 4 * d_model
+        k3_ff = k3_ff or 4 * d_model
+        for name, h in (("k2_heads", k2_heads), ("k3_heads", k3_heads)):
+            if d_model % h:
+                raise ValueError(f"WiFormer: d_model={d_model} not divisible by {name}={h}")
+
         if k1_branch not in ("both", "time", "freq", "none"):
             raise ValueError(f"WiFormer: k1_branch must be both/time/freq/none, got '{k1_branch}'")
         self.block1 = SubFeatureExtractor(
             d_model, feat, window, stride,
             use_time=k1_branch in ("both", "time"),
             use_freq=k1_branch in ("both", "freq"),
+            n_conv=k1_conv, pool=k1_pool,
         )
         self.block2 = JointRxSubAttention(
             n_sub, d_model, k2_heads, k2_layers, k2_ff, dropout, activation, norm_first,

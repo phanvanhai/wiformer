@@ -71,11 +71,27 @@ DESIGN_VARIANTS = {
     "win128": ("Input", "Window 128 / stride 64", ["--window=128", "--stride=64"]),
 }
 
-VARIANTS = {**CORE_VARIANTS, **DESIGN_VARIANTS}
+# ---- Optional: scale up (one change at a time, then combined) ----
+# step cost vs full measured on SSHAR-ESP (3 x 56 x 1000), CPU, batch 4
+D128 = ["--d_model=128", "--k2_heads=8", "--k3_heads=8"]
+K1_DEEP = ["--k1_conv=3", "--k1_pool=flat4"]
+SCALE_VARIANTS = {
+    "k1_flat4": ("Block 1", "Conv1d keeps 4 steps (flat4) instead of global avg", ["--k1_pool=flat4"]),   # ~1.1x
+    "k1_deep": ("Block 1", "3 Conv1d layers + flat4", K1_DEEP),                                     # ~1.2x
+    "k2_l3": ("Block 2", "Block 2: 3 layers", ["--k2_layers=3"]),                                   # ~1.2x
+    "k3_l6": ("Block 3", "Block 3: 6 layers", ["--k3_layers=6"]),                                   # ~1.0x
+    "d96": ("Width", "D = 96, 6 heads", ["--d_model=96", "--k2_heads=6", "--k3_heads=6"]),          # ~1.3x
+    "d128": ("Width", "D = 128, 8 heads", D128),                                                    # ~1.8x
+    "d128_k1deep": ("Combined", "D = 128 + Block 1 deep + dropout 0.2",
+                    [*D128, "--feat=128", *K1_DEEP, "--dropout=0.2"]),                              # ~2.5x
+}
+
+VARIANTS = {**CORE_VARIANTS, **DESIGN_VARIANTS, **SCALE_VARIANTS}
 SETS = {
     "core": list(CORE_VARIANTS),
     # "full" is kept so the summary can compute delta_acc
     "design": ["full", *DESIGN_VARIANTS],
+    "scale": ["full", *SCALE_VARIANTS],
     "all": list(VARIANTS),
 }
 
@@ -93,7 +109,8 @@ def parse_args():
     p.add_argument("--result_root", type=str, default="results/ablation")
     p.add_argument("--set", type=str, default="core", choices=list(SETS),
                    help="core = remove one block at a time (default), "
-                        "design = design choices inside blocks, all = both")
+                        "design = design choices inside blocks, "
+                        "scale = bigger blocks, all = everything")
     p.add_argument("--variants", nargs="+", default=None,
                    help="Explicit list of variants (overrides --set)")
     p.add_argument("--skip_done", action="store_true",
@@ -184,7 +201,8 @@ def main():
 
     if args.list:
         for title, table in (("core (remove one block at a time)", CORE_VARIANTS),
-                             ("design (choices inside blocks)", DESIGN_VARIANTS)):
+                             ("design (choices inside blocks)", DESIGN_VARIANTS),
+                             ("scale (bigger blocks)", SCALE_VARIANTS)):
             print(f"[{title}]")
             for name, (group, desc, cli) in table.items():
                 print(f"  {name:<14}{group:<9}{desc:<48}{' '.join(cli)}")
