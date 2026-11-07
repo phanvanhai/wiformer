@@ -25,9 +25,12 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 
 
-# Default split mode when none is passed: "repeat" (by repetition index)
-# or "user" (cross-user, train users given by USER_CASES[...][case_split]).
-SPLIT_MODES = ("repeat", "user")
+# Default split mode when none is passed: "repeat" (by repetition index),
+# "user" (cross-user, train users given by USER_CASES[...][case_split]) or
+# "position" (SSHAR only, cross-position: test = positions with
+# pos % N_POSITION_CASES == case_split, i.e. 2 of the 8 positions per case).
+SPLIT_MODES = ("repeat", "user", "position")
+N_POSITION_CASES = 4
 DEFAULT_SPLIT_MODE = "repeat"
 
 
@@ -472,6 +475,9 @@ class _SSHARDatasetBase(Dataset):
                         # Chia theo so lan lap
                         is_train = (rep <= 8 if direction == 0 else rep <= 4)
                         # print("Split by repeat")
+                    elif self.split_mode == "position":
+                        # Chia theo vi tri: giu lai 2/8 vi tri lam test
+                        is_train = pos % N_POSITION_CASES != self.case_split
                     else:
                         # Chia theo nguoi
                         user_num = int(subject.split("_")[1])
@@ -835,6 +841,8 @@ class XRF55Dataset(Dataset):
                 if action_id_int not in self.label_map:
                     continue
 
+                if self.split_mode == "position":
+                    raise ValueError("split_mode='position' is only available for SSHAR")
                 if self.split_mode == "repeat":
                     # Chia theo so lan lap                
                     is_train = rep_num <= 16
@@ -1001,6 +1009,11 @@ def load_dataset(
     split_mode = _check_split_mode(kwargs.get("split_mode", DEFAULT_SPLIT_MODE))
     if split_mode == "user":
         print(f"Split mode = user, case = {case_split}")
+    elif split_mode == "position":
+        if not 0 <= case_split < N_POSITION_CASES:
+            raise ValueError(f"split_mode=position needs case_split in 0..{N_POSITION_CASES - 1}")
+        print(f"Split mode = position, case = {case_split} "
+              f"(test positions: pos % {N_POSITION_CASES} == {case_split})")
     else:
         print("Split mode = repeat")
 

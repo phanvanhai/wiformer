@@ -311,15 +311,16 @@ def parse_args():
             type=int,
             default=0,
             choices=[0, 1, 2, 3, 4],
-            help="case split from 0 to 4 (used when --split_mode=user)"
+            help="case split: 0..4 for --split_mode=user, 0..3 for --split_mode=position"
         )
 
     parser.add_argument(
             "--split_mode",
             type=str,
             default="repeat",
-            choices=["repeat", "user"],
-            help="train/test split: 'repeat' (by repetition index) or 'user' (cross-user, uses --case_split)"
+            choices=["repeat", "user", "position"],
+            help="train/test split: 'repeat' (by repetition index), 'user' (cross-user, uses --case_split) "
+                 "or 'position' (SSHAR cross-position, --case_split 0..3 holds out pos %% 4 == case)"
         )
 
     return parser.parse_args()
