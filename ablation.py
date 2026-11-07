@@ -84,6 +84,9 @@ SCALE_VARIANTS = {
     "d128": ("Width", "D = 128, 8 heads", D128),                                                    # ~1.8x
     "d128_k1deep": ("Combined", "D = 128 + Block 1 deep + dropout 0.2",
                     [*D128, "--feat=128", *K1_DEEP, "--dropout=0.2"]),                              # ~2.5x
+    # first config to try: wider everywhere, deeper Block 1/3, Block 2 depth unchanged
+    "proposed": ("Combined", "D=128/8 heads, Block 1 feat 128 + 3 conv + flat4, Block 3 6 layers",
+                 [*D128, "--feat=128", *K1_DEEP, "--k3_layers=6"]),                                # ~2.5x
 }
 
 VARIANTS = {**CORE_VARIANTS, **DESIGN_VARIANTS, **SCALE_VARIANTS}
