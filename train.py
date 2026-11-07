@@ -215,6 +215,7 @@ def evaluate(
 def train(
     model,
     train_loader,
+    val_loader,
     test_loader,
     epochs,
     lr,
@@ -267,9 +268,9 @@ def train(
             device=device,
         )
 
-        test_loss, test_acc, y_true, y_pred = evaluate(
+        val_loss, val_acc, _, _ = evaluate(
             model=model,
-            loader=test_loader,
+            loader=val_loader,
             criterion=criterion,
             device=device,
         )
@@ -278,23 +279,24 @@ def train(
             "epoch": epoch,
             "train_loss": train_loss,
             "train_acc": train_acc,
-            "test_loss": test_loss,
-            "test_acc": test_acc,
+            "val_loss": val_loss,
+            "val_acc": val_acc,
+            "lr": optimizer.param_groups[0]["lr"],
         })
 
         print(
             f"[{epoch:03d}/{epochs}] "
             f"Train Loss: {train_loss:.4f}  "
             f"Train Acc: {train_acc:.4f}  "
-            f"Test Loss: {test_loss:.4f}  "
-            f"Test Acc: {test_acc:.4f}"
+            f"Val Loss: {val_loss:.4f}  "
+            f"Val Acc: {val_acc:.4f}"
         )
 
         # ----------------------------------------------------
-        # Save best model
+        # Save best model (selected on VAL, never on test)
         # ----------------------------------------------------
-        if test_acc > best_acc:
-            best_acc = test_acc
+        if val_acc > best_acc:
+            best_acc = val_acc
             best_epoch = epoch
             torch.save(
                 model.state_dict(),
@@ -309,7 +311,7 @@ def train(
                 scheduler,
                 lr_scheduler.ReduceLROnPlateau,
             ):
-                scheduler.step(test_loss)
+                scheduler.step(val_loss)
             else:
                 scheduler.step()
 
@@ -320,7 +322,7 @@ def train(
 
     print("\nTraining Finished")
     print(f"Best Epoch : {best_epoch}")
-    print(f"Best Acc   : {best_acc:.4f}")
+    print(f"Best Val Acc: {best_acc:.4f}")
     print(f"Time       : {elapsed:.1f} sec")
 
     # --------------------------------------------------------
@@ -349,7 +351,7 @@ def train(
     )
 
     # --------------------------------------------------------
-    # Final evaluation
+    # Final evaluation on TEST (best-on-val checkpoint)
     # --------------------------------------------------------
     test_loss, test_acc, y_true, y_pred = evaluate(
         model=model,
@@ -357,6 +359,7 @@ def train(
         criterion=criterion,
         device=device,
     )
+    print(f"Test Acc   : {test_acc:.4f}")
 
     return (
         history,

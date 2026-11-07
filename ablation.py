@@ -169,7 +169,7 @@ def summarize(result_root, dataset, names, tag):
         w.writerows(rows)
 
     print(f"\nAblation summary - {dataset} ({tag})")
-    print(f"{'variant':<14}{'group':<9}{'acc':>8}{'Δacc':>8}{'F1':>8}{'params':>10}  description")
+    print(f"{'variant':<14}{'group':<9}{'acc':>8}{'d_acc':>8}{'F1':>8}{'params':>10}  description")
     for r in rows:
         d = "" if r["delta_acc"] is None else f"{100 * r['delta_acc']:+.2f}"
         print(

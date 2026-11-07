@@ -167,6 +167,8 @@ def save_metrics(
     total_params=None,
     trainable_params=None,
     complexity=None,
+    val_size=None,
+    best_val_acc=None,
 ):
 
     data = {
@@ -190,8 +192,12 @@ def save_metrics(
             int(best_epoch),
         "train_size":
             int(train_size),
+        "val_size":
+            None if val_size is None else int(val_size),
         "test_size":
             int(test_size),
+        "best_val_acc":
+            None if best_val_acc is None else float(best_val_acc),
         "training_time":
             float(training_time),
         "total_params":
@@ -358,6 +364,9 @@ def plot_learning_curve(
     if isinstance(history, str):
         history = pd.read_csv(history)
 
+    # new runs log "val_*"; old history.csv files only have "test_*"
+    ev, ev_label = ("val", "Val") if "val_loss" in history else ("test", "Test")
+
     plt.figure(figsize=(10, 4))
     # --------------------------------------------------------
     # Loss
@@ -373,8 +382,8 @@ def plot_learning_curve(
 
     plt.plot(
         history["epoch"],
-        history["test_loss"],
-        label="Test",
+        history[f"{ev}_loss"],
+        label=ev_label,
         linewidth=2,
     )
 
@@ -397,8 +406,8 @@ def plot_learning_curve(
 
     plt.plot(
         history["epoch"],
-        history["test_acc"],
-        label="Test",
+        history[f"{ev}_acc"],
+        label=ev_label,
         linewidth=2,
     )
 
@@ -481,6 +490,8 @@ def evaluate_model(
     total_params=None,
     trainable_params=None,
     complexity=None,
+    val_size=None,
+    best_val_acc=None,
 ):
     """
     Save all evaluation results.
@@ -522,6 +533,8 @@ def evaluate_model(
         total_params=total_params,
         trainable_params=trainable_params,
         complexity=complexity,
+        val_size=val_size,
+        best_val_acc=best_val_acc,
     )
 
     save_predictions(

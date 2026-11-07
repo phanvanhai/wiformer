@@ -121,7 +121,7 @@ def parse_args():
         "--lr",
         type=float,
         default=None,
-        help="Default: per-model (wiformer=1e-4, others=1e-3)",
+        help="Default: 1e-3 for all models",
     )
 
     parser.add_argument(
@@ -129,14 +129,14 @@ def parse_args():
         type=str,
         default=None,
         choices=["adam", "adamw"],
-        help="Default: per-model (wiformer=adamw, others=adam)",
+        help="Default: adam for all models",
     )
 
     parser.add_argument(
         "--weight_decay",
         type=float,
         default=None,
-        help="Default: per-model (wiformer=0.01, others=0)",
+        help="Default: 0 for all models",
     )
 
     parser.add_argument(
@@ -319,7 +319,7 @@ def parse_args():
             type=str,
             default="repeat",
             choices=["repeat", "user", "position"],
-            help="train/test split: 'repeat' (by repetition index), 'user' (cross-user, uses --case_split) "
+            help="split: 'repeat' (random 7:1:1 train:val:test, stratified by class), 'user' (cross-user, uses --case_split) "
                  "or 'position' (SSHAR cross-position, --case_split 0..3 holds out pos %% 4 == case)"
         )
 
@@ -330,11 +330,13 @@ def get_default_train_cfg(model_name):
     """Per-model defaults for lr / batch size / optimizer."""
     model_name = model_name.lower()
     if model_name == "wiformer":
+        # Adam, lr=1e-3 (as in common WiFi-HAR baselines). Warmup + cosine
+        # are kept for the Transformer so the large initial lr stays stable.
         return {
-            "lr": 1e-4,
+            "lr": 1e-3,
             "batch_size": 32,
-            "optimizer": "adamw",
-            "weight_decay": 0.01,
+            "optimizer": "adam",
+            "weight_decay": 0.0,
             "warmup_epochs": 5,
         }
     return {
@@ -412,7 +414,7 @@ def main():
     dataset_kwargs["split_mode"] = args.split_mode
 
     if args.model == "cnn_gru":
-        train_loader, test_loader, info = load_dataset(
+        train_loader, val_loader, test_loader, info = load_dataset(
             name=args.dataset,
             root_dir=args.data_root,
             batch_size=args.batch_size,
@@ -421,7 +423,7 @@ def main():
             **dataset_kwargs,
         )
     else:
-        train_loader, test_loader, info = load_dataset(
+        train_loader, val_loader, test_loader, info = load_dataset(
             name=args.dataset,
             root_dir=args.data_root,
             batch_size=args.batch_size,
@@ -432,11 +434,13 @@ def main():
     input_shape = info["input_shape"]
     num_classes = info["num_classes"]
     train_size = info["train_size"]
+    val_size = info["val_size"]
     test_size = info["test_size"]
 
     print("Input Shape :", input_shape)
     print("Classes     :", num_classes)
     print("Train Size  :", train_size)
+    print("Val Size    :", val_size)
     print("Test Size   :", test_size)
     print()
 
@@ -572,6 +576,7 @@ def main():
     history, y_true, y_pred, best_epoch, best_acc = train(
         model=model,
         train_loader=train_loader,
+        val_loader=val_loader,
         test_loader=test_loader,
         epochs=args.epochs,
         lr=args.lr,
@@ -598,6 +603,8 @@ def main():
         total_params=total_params,
         trainable_params=trainable_params,
         complexity=complexity,
+        val_size=val_size,
+        best_val_acc=best_acc,
     )
 
     print()

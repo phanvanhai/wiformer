@@ -40,6 +40,44 @@ def _check_split_mode(split_mode):
         raise ValueError(f"split_mode must be one of {SPLIT_MODES}, got '{split_mode}'")
     return split_mode
 
+
+# train : val : test ratio.
+#   repeat           -> all samples split 7:1:1, stratified by class.
+#   user / position  -> test = held-out users/positions (unchanged);
+#                       the rest is split train:val = 7:1, stratified by class.
+# The split uses its own fixed seed, so it is identical across runs/models.
+SPLIT_RATIO = (7, 1, 1)
+SPLIT_SEED = 42
+
+
+def _assign_splits(labels, held_out, carve_test, ratio=SPLIT_RATIO, seed=SPLIT_SEED):
+    """Return an array of 'train' / 'val' / 'test', one per sample.
+
+    labels   : class index per sample (samples must be in a deterministic order)
+    held_out : True if the sample is already test (user / position split)
+    carve_test : True for 'repeat' (test is a random 1/9); False for user /
+                 position (test = held_out only, rest split train:val)
+    """
+    labels = np.asarray(labels)
+    held_out = np.asarray(held_out, dtype=bool)
+    out = np.full(len(labels), "train", dtype=object)
+    out[held_out] = "test"
+
+    n_train, n_val, n_test = ratio
+    if not carve_test:
+        n_test = 0  # test already fixed, only carve val out of the rest
+    total = n_train + n_val + n_test
+
+    rng = np.random.RandomState(seed)
+    for c in np.unique(labels):
+        idx = np.where((labels == c) & ~held_out)[0]
+        rng.shuffle(idx)
+        k_test = int(round(len(idx) * n_test / total))
+        k_val = int(round(len(idx) * n_val / total))
+        out[idx[:k_test]] = "test"
+        out[idx[k_test:k_test + k_val]] = "val"
+    return out
+
 # ============================================================
 # Default configuration
 # ============================================================
@@ -472,22 +510,15 @@ class _SSHARDatasetBase(Dataset):
 
                     
                     if self.split_mode == "repeat":
-                        # Chia theo so lan lap
-                        is_train = (rep <= 8 if direction == 0 else rep <= 4)
-                        # print("Split by repeat")
+                        # Chia ngau nhien 7:1:1 theo lop (xem _assign_splits)
+                        held_out = False
                     elif self.split_mode == "position":
                         # Chia theo vi tri: giu lai 2/8 vi tri lam test
-                        is_train = pos % N_POSITION_CASES != self.case_split
+                        held_out = pos % N_POSITION_CASES == self.case_split
                     else:
                         # Chia theo nguoi
                         user_num = int(subject.split("_")[1])
-                        is_train = user_num in USER_CASES["sshar"][self.case_split]
-                        # print("Split by user")
-
-                    if (self.split == "train" and not is_train):
-                        continue
-                    if (self.split == "test" and is_train ):
-                        continue
+                        held_out = user_num not in USER_CASES["sshar"][self.case_split]
 
                     rx_files = []
 
@@ -506,9 +537,20 @@ class _SSHARDatasetBase(Dataset):
                             "label": self.label_map[act],
                             "room": room,
                             "subject": subject,
+                            "pos": pos,
+                            "dir": direction,
+                            "rep": rep,
                             "files": rx_files,
+                            "held_out": held_out,
                         }
                     )
+
+        splits = _assign_splits(
+            [s["label"] for s in self.samples],
+            [s["held_out"] for s in self.samples],
+            carve_test=self.split_mode == "repeat",
+        )
+        self.samples = [s for s, sp in zip(self.samples, splits) if sp == self.split]
 
     # --------------------------------------------------------
     def __len__(self):
@@ -844,26 +886,29 @@ class XRF55Dataset(Dataset):
                 if self.split_mode == "position":
                     raise ValueError("split_mode='position' is only available for SSHAR")
                 if self.split_mode == "repeat":
-                    # Chia theo so lan lap                
-                    is_train = rep_num <= 16
+                    # Chia ngau nhien 7:1:1 theo lop (xem _assign_splits)
+                    held_out = False
                 else:
                     # Chia theo nguoi
                     user_num = int(user_id)
-                    is_train = user_num in USER_CASES["xrf55"][self.case_split]
-                
-
-                if self.split == "train" and not is_train:
-                    continue
-                if self.split == "test" and is_train:
-                    continue
+                    held_out = user_num not in USER_CASES["xrf55"][self.case_split]
 
                 # Remap selected labels to contiguous indices 0..5.
                 label = self.label_map[action_id_int]
 
                 self.samples.append({
                     "path": str(file_path),
-                    "label": label
+                    "label": label,
+                    "rep": rep_num,
+                    "held_out": held_out,
                 })
+
+        splits = _assign_splits(
+            [s["label"] for s in self.samples],
+            [s["held_out"] for s in self.samples],
+            carve_test=self.split_mode == "repeat",
+        )
+        self.samples = [s for s, sp in zip(self.samples, splits) if sp == self.split]
 
     def __len__(self):
         return len(self.samples)
@@ -958,29 +1003,23 @@ def compute_xrf55_mean_std(root_dir, case_split, shape_option="2d", num_sub=30, 
 
 def create_dataloader(
     train_dataset,
+    val_dataset,
     test_dataset,
     batch_size=DEFAULT_BATCH_SIZE,
     num_workers=DEFAULT_NUM_WORKERS,
     pin_memory=DEFAULT_PIN_MEMORY,
 ):
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-    )
+    def make(ds, shuffle):
+        return DataLoader(
+            ds,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
 
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-    )
-
-    return train_loader, test_loader
+    return make(train_dataset, True), make(val_dataset, False), make(test_dataset, False)
 
 
 # ============================================================
@@ -995,8 +1034,18 @@ def load_dataset(
     **kwargs
 ):
     """
-    Added kwargs to support passing specific split definitions 
-    like case_split for XRF55, shape_option for CNN models, and target_time for time resampling.
+    Build train / val / test loaders.
+
+    Split (see SPLIT_RATIO / _assign_splits):
+      repeat          -> 7:1:1 stratified by class (fixed seed)
+      user / position -> test = held-out users / positions,
+                         rest split train:val = 7:1 stratified by class
+      ut_har          -> the dataset's own X_train / X_val / X_test files
+
+    The best epoch is chosen on val; test is only used for the final report.
+
+    kwargs: case_split, split_mode, shape_option, num_sub (XRF55),
+            target_time, intel_shape, allowed_labels.
     """
 
     name = name.lower()
@@ -1007,15 +1056,18 @@ def load_dataset(
     allowed_labels = kwargs.get("allowed_labels", DEFAULT_SELECTED_LABELS)
     case_split = kwargs.get("case_split", 0)
     split_mode = _check_split_mode(kwargs.get("split_mode", DEFAULT_SPLIT_MODE))
+    ratio = ":".join(map(str, SPLIT_RATIO))
     if split_mode == "user":
-        print(f"Split mode = user, case = {case_split}")
+        print(f"Split mode = user, case = {case_split} (val = 1/8 of train users' samples)")
     elif split_mode == "position":
         if not 0 <= case_split < N_POSITION_CASES:
             raise ValueError(f"split_mode=position needs case_split in 0..{N_POSITION_CASES - 1}")
         print(f"Split mode = position, case = {case_split} "
-              f"(test positions: pos % {N_POSITION_CASES} == {case_split})")
+              f"(test positions: pos % {N_POSITION_CASES} == {case_split}, "
+              f"val = 1/8 of the other positions' samples)")
     else:
-        print("Split mode = repeat")
+        print(f"Split mode = repeat (random {ratio} train:val:test, stratified by class, "
+              f"seed={SPLIT_SEED})")
 
     # =======================================================
     # UT_HAR
@@ -1030,125 +1082,48 @@ def load_dataset(
                 root_dir
             )
 
-        train_dataset = UTHARDataset(
-            root_dir=root_dir,
-            split="train",
-            normalize=normalize,
-            norm_type=norm_type,
-            mean=mean,
-            std=std,
-        )
-
-        test_dataset = UTHARDataset(
-            root_dir=root_dir,
-            split="test",
-            normalize=normalize,
-            norm_type=norm_type,
-            mean=mean,
-            std=std,
-        )
+        def make(split):
+            return UTHARDataset(
+                root_dir=root_dir,
+                split=split,
+                normalize=normalize,
+                norm_type=norm_type,
+                mean=mean,
+                std=std,
+            )
 
     # =======================================================
-    # SSHAR ESP
+    # SSHAR ESP / ASUS
     # =======================================================
-    elif name == "sshar_esp":
+    elif name in ("sshar_esp", "sshar_asus"):
+        cls = SSHAR_ESP_Dataset if name == "sshar_esp" else SSHAR_ASUS_Dataset
         if norm_type is None:
             norm_type = "zscore"
 
-        mean = std = None
-        if normalize and norm_type == "zscore":
-            tmp = SSHAR_ESP_Dataset(
-                root_dir=root_dir,
-                split="train",
-                case_split=case_split,
-                split_mode=split_mode,
-                shape_option=shape_option,
-                normalize=False,
-                target_time=target_time,
-                intel_shape=intel_shape,
-            )
-            mean, std = compute_sshar_mean_std(tmp)
-
-        train_dataset = SSHAR_ESP_Dataset(
+        common = dict(
             root_dir=root_dir,
-            split="train",
             case_split=case_split,
             split_mode=split_mode,
             shape_option=shape_option,
-            normalize=normalize,
-            norm_type=norm_type,
-            mean=mean,
-            std=std,
             target_time=target_time,
             intel_shape=intel_shape,
             allowed_labels=allowed_labels,
         )
-
-        test_dataset = SSHAR_ESP_Dataset(
-            root_dir=root_dir,
-            split="test",
-            case_split=case_split,
-            split_mode=split_mode,
-            shape_option=shape_option,
-            normalize=normalize,
-            norm_type=norm_type,
-            mean=mean,
-            std=std,
-            target_time=target_time,
-            intel_shape=intel_shape,
-            allowed_labels=allowed_labels,
-        )
-
-    # =======================================================
-    # SSHAR asus
-    # =======================================================
-    elif name == "sshar_asus":
-        if norm_type is None:
-            norm_type = "zscore"
 
         mean = std = None
         if normalize and norm_type == "zscore":
-            tmp = SSHAR_ASUS_Dataset(
-                root_dir=root_dir,
-                split="train",
-                case_split=case_split,
-                split_mode=split_mode,
-                shape_option=shape_option,
-                normalize=False,
-                target_time=target_time,
-                intel_shape=intel_shape,
+            # mean/std from the TRAIN split only
+            mean, std = compute_sshar_mean_std(cls(split="train", normalize=False, **common))
+
+        def make(split):
+            return cls(
+                split=split,
+                normalize=normalize,
+                norm_type=norm_type,
+                mean=mean,
+                std=std,
+                **common,
             )
-            mean, std = compute_sshar_mean_std(tmp)
-
-        train_dataset = SSHAR_ASUS_Dataset(
-            root_dir=root_dir,
-            split="train",
-            case_split=case_split,
-            split_mode=split_mode,
-            shape_option=shape_option,
-            normalize=normalize,
-            norm_type=norm_type,
-            mean=mean,
-            std=std,
-            target_time=target_time,
-            intel_shape=intel_shape,
-            allowed_labels=allowed_labels,
-        )
-
-        test_dataset = SSHAR_ASUS_Dataset(
-            root_dir=root_dir,
-            split="test",
-            case_split=case_split,
-            split_mode=split_mode,
-            shape_option=shape_option,
-            normalize=normalize,
-            norm_type=norm_type,
-            mean=mean,
-            std=std,
-            target_time=target_time,
-            intel_shape=intel_shape,
-            allowed_labels=allowed_labels,
-        )
 
     # =======================================================
     # XRF55
@@ -1162,43 +1137,33 @@ def load_dataset(
             mean, std = compute_xrf55_mean_std(root_dir, case_split, shape_option, num_sub, target_time,
                                                split_mode=split_mode)
 
-        train_dataset = XRF55Dataset(
-            root_dir=root_dir,
-            split="train",
-            case_split=case_split,
-            split_mode=split_mode,
-            shape_option=shape_option,
-            num_sub=num_sub,
-            normalize=normalize,
-            norm_type=norm_type,
-            mean=mean,
-            std=std,
-            target_time=target_time,
-            allowed_labels=allowed_labels,
-        )
-
-        test_dataset = XRF55Dataset(
-            root_dir=root_dir,
-            split="test",
-            case_split=case_split,
-            split_mode=split_mode,
-            shape_option=shape_option,
-            num_sub=num_sub,
-            normalize=normalize,
-            norm_type=norm_type,
-            mean=mean,
-            std=std,
-            target_time=target_time,
-            allowed_labels=allowed_labels,
-        )
+        def make(split):
+            return XRF55Dataset(
+                root_dir=root_dir,
+                split=split,
+                case_split=case_split,
+                split_mode=split_mode,
+                shape_option=shape_option,
+                num_sub=num_sub,
+                normalize=normalize,
+                norm_type=norm_type,
+                mean=mean,
+                std=std,
+                target_time=target_time,
+                allowed_labels=allowed_labels,
+            )
 
     else:
         raise ValueError(
             f"Unknown dataset: {name}"
         )
 
+    train_dataset = make("train")
+    val_dataset = make("val")
+    test_dataset = make("test")
+
     # =======================================================
-    for split_name, ds in (("train", train_dataset), ("test", test_dataset)):
+    for split_name, ds in (("train", train_dataset), ("val", val_dataset), ("test", test_dataset)):
         if len(ds) == 0:
             raise RuntimeError(
                 f"[{name}] {split_name} split is empty (0 samples). "
@@ -1208,19 +1173,17 @@ def load_dataset(
                 f"case_split={case_split})."
             )
 
-    train_loader, test_loader = create_dataloader(
+    train_loader, val_loader, test_loader = create_dataloader(
         train_dataset,
+        val_dataset,
         test_dataset,
         batch_size=batch_size,
     )
 
     # Handling info extraction
-    if len(train_dataset) > 0:
-        x, y = train_dataset[0]
-        input_shape = tuple(x.shape)
-    else:
-        input_shape = ()
-        
+    x, _ = train_dataset[0]
+    input_shape = tuple(x.shape)
+
     num_classes = len(set(train_dataset.y)) if isinstance(train_dataset, UTHARDataset) else len(set(s["label"] for s in train_dataset.samples))
 
     info = {
@@ -1228,11 +1191,13 @@ def load_dataset(
         "input_shape": input_shape,
         "num_classes": num_classes,
         "train_size": len(train_dataset),
+        "val_size": len(val_dataset),
         "test_size": len(test_dataset),
     }
 
     return (
         train_loader,
+        val_loader,
         test_loader,
         info,
     )
