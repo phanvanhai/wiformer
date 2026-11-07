@@ -169,6 +169,7 @@ def save_metrics(
     complexity=None,
     val_size=None,
     best_val_acc=None,
+    epochs_trained=None,
 ):
 
     data = {
@@ -190,6 +191,8 @@ def save_metrics(
             float(metrics["f1_weighted"]),
         "best_epoch":
             int(best_epoch),
+        "epochs_trained":
+            None if epochs_trained is None else int(epochs_trained),
         "train_size":
             int(train_size),
         "val_size":
@@ -492,6 +495,7 @@ def evaluate_model(
     complexity=None,
     val_size=None,
     best_val_acc=None,
+    epochs_trained=None,
 ):
     """
     Save all evaluation results.
@@ -535,6 +539,7 @@ def evaluate_model(
         complexity=complexity,
         val_size=val_size,
         best_val_acc=best_val_acc,
+        epochs_trained=epochs_trained,
     )
 
     save_predictions(

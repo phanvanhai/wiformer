@@ -223,6 +223,7 @@ def train(
     save_dir,
     scheduler_cfg=None,
     optimizer_cfg=None,
+    patience=10,
 ):
     """
     Train model.
@@ -236,6 +237,9 @@ def train(
         - warmup_epochs: optional linear warmup
     optimizer_cfg : dict or None
         {"name": "adam" | "adamw", "weight_decay": float}
+    patience : int
+        Early stopping: stop when val acc has not improved for `patience`
+        epochs in a row. 0 or None disables it.
 
     Returns
     -------
@@ -256,6 +260,7 @@ def train(
 
     best_acc = -1.0  # ensure best_model.pth is saved at least once
     best_epoch = 0
+    epochs_no_improve = 0
 
     start_time = time.time()
     # --------------------------------------------------------
@@ -298,6 +303,7 @@ def train(
         if val_acc > best_acc:
             best_acc = val_acc
             best_epoch = epoch
+            epochs_no_improve = 0
             torch.save(
                 model.state_dict(),
                 os.path.join(
@@ -314,6 +320,18 @@ def train(
                 scheduler.step(val_loss)
             else:
                 scheduler.step()
+
+        # ----------------------------------------------------
+        # Early stopping (on val acc)
+        # ----------------------------------------------------
+        if epoch != best_epoch:
+            epochs_no_improve += 1
+        if patience and epochs_no_improve >= patience:
+            print(
+                f"Early stopping at epoch {epoch}: val acc has not improved "
+                f"for {patience} epochs (best {best_acc:.4f} @ epoch {best_epoch})"
+            )
+            break
 
     # --------------------------------------------------------
     # Training finished

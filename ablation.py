@@ -81,7 +81,7 @@ SETS = {
 
 METRIC_KEYS = [
     "accuracy", "f1_macro", "precision_macro", "recall_macro",
-    "best_epoch", "total_params", "flops_per_sample", "training_time",
+    "best_epoch", "epochs_trained", "total_params", "flops_per_sample", "training_time",
 ]
 
 

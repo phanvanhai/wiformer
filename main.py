@@ -111,6 +111,13 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--patience",
+        type=int,
+        default=10,
+        help="Early stopping: stop after N epochs without val-acc improvement (0 = off)",
+    )
+
+    parser.add_argument(
         "--batch_size",
         type=int,
         default=None,
@@ -584,6 +591,7 @@ def main():
         save_dir=save_dir,
         scheduler_cfg=scheduler_cfg,
         optimizer_cfg=optimizer_cfg,
+        patience=args.patience,
     )
     training_time = time.time() - start_time
     # --------------------------------------------------------
@@ -605,6 +613,7 @@ def main():
         complexity=complexity,
         val_size=val_size,
         best_val_acc=best_acc,
+        epochs_trained=len(history),
     )
 
     print()
