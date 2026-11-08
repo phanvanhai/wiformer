@@ -444,6 +444,9 @@ class WiFormer(BaseModel):
                 f"WiFormer: input_shape {tuple(input_shape)} has {n_channels} "
                 f"channels, expected n_rx*n_ant*n_sub = {n_rx}*{n_ant}*{n_sub}"
             )
+        if window <= 0:
+            # no windowing: the whole sequence is one window (ablation)
+            window = stride = T
         if T < window:
             raise ValueError(f"WiFormer: T={T} < window={window}")
         self.n_win = (T - window) // stride + 1

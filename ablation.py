@@ -96,12 +96,26 @@ SCALE_VARIANTS = {
                  [*D128, "--feat=128", *K1_DEEP, "--k3_layers=6"]),                                # 6.5x
 }
 
-VARIANTS = {**CORE_VARIANTS, **DESIGN_VARIANTS, **SCALE_VARIANTS}
+# ---- Windowing ablation on option B (one of the paper's contributions) ----
+# Reference = opt_b (W=64, S=32 -> 30 windows with 50% overlap).
+OPT_B = [*K1_DEEP, "--k3_layers=6"]
+WINDOW_VARIANTS = {
+    # whole 5 s recording as ONE window: Block 1 on 1000 samples, Block 2 once,
+    # Block 3 sees a single token (so no temporal modelling across windows)
+    "b_nowin": ("Window", "Option B without windowing (W = T, 1 window)",
+                [*OPT_B, "--window=0"]),                                     # 0.35x vs opt_b
+    "b_nooverlap": ("Window", "Option B, windows without overlap (W = S = 64, 15 windows)",
+                    [*OPT_B, "--window=64", "--stride=64"]),                                     # 0.5x vs opt_b
+}
+
+VARIANTS = {**CORE_VARIANTS, **DESIGN_VARIANTS, **SCALE_VARIANTS, **WINDOW_VARIANTS}
 SETS = {
     "core": list(CORE_VARIANTS),
     # "full" is kept so the summary can compute delta_acc
     "design": ["full", *DESIGN_VARIANTS],
     "scale": ["full", *SCALE_VARIANTS],
+    # reference first: delta_acc is computed against opt_b here
+    "window": ["opt_b", *WINDOW_VARIANTS],
     "all": list(VARIANTS),
 }
 
@@ -120,7 +134,8 @@ def parse_args():
     p.add_argument("--set", type=str, default="core", choices=list(SETS),
                    help="core = remove one block at a time (default), "
                         "design = design choices inside blocks, "
-                        "scale = bigger blocks, all = everything")
+                        "scale = bigger blocks, window = windowing on option B, "
+                        "all = everything")
     p.add_argument("--variants", nargs="+", default=None,
                    help="Explicit list of variants (overrides --set)")
     p.add_argument("--skip_done", action="store_true",
@@ -164,6 +179,8 @@ def run_variant(args, name):
 
 def summarize(result_root, dataset, names, tag):
     rows = []
+    # delta_acc is measured against "full" if it is in the list, else the first name
+    ref = "full" if "full" in names else names[0]
     full_acc = None
     for name in names:
         f = os.path.join(run_dir(result_root, dataset, name), "metrics.json")
@@ -177,7 +194,7 @@ def summarize(result_root, dataset, names, tag):
         row = {"variant": name, "group": group, "description": desc}
         row.update({k: m.get(k) for k in METRIC_KEYS})
         rows.append(row)
-        if name == "full":
+        if name == ref:
             full_acc = m["accuracy"]
 
     if not rows:
@@ -212,7 +229,8 @@ def main():
     if args.list:
         for title, table in (("core (remove one block at a time)", CORE_VARIANTS),
                              ("design (choices inside blocks)", DESIGN_VARIANTS),
-                             ("scale (bigger blocks)", SCALE_VARIANTS)):
+                             ("scale (bigger blocks)", SCALE_VARIANTS),
+                             ("window (windowing on option B, reference opt_b)", WINDOW_VARIANTS)):
             print(f"[{title}]")
             for name, (group, desc, cli) in table.items():
                 print(f"  {name:<14}{group:<9}{desc:<48}{' '.join(cli)}")

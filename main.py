@@ -325,7 +325,8 @@ def parse_args():
     parser.add_argument("--dropout", type=float, default=0.1, help="WiFormer: dropout")
     parser.add_argument("--sub_group", type=int, default=1,
                         help="WiFormer: average every N adjacent subcarriers before Block 1 (56 -> 56/N tokens)")
-    parser.add_argument("--window", type=int, default=64, help="WiFormer window W")
+    parser.add_argument("--window", type=int, default=64,
+                        help="WiFormer window W (0 = no windowing: one window over the whole sequence)")
     parser.add_argument("--stride", type=int, default=32, help="WiFormer stride")
     parser.add_argument(
         "--run_name",
