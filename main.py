@@ -314,7 +314,7 @@ def parse_args():
     # ---- WiFormer capacity (defaults = current model) ----
     parser.add_argument("--d_model", type=int, default=64, help="WiFormer: token dim D (all blocks)")
     parser.add_argument("--feat", type=int, default=64, help="WiFormer Block 1: Conv1d output channels")
-    parser.add_argument("--k1_conv", type=int, default=2, choices=[2, 3],
+    parser.add_argument("--k1_conv", type=int, default=2, choices=[2, 3, 4],
                         help="WiFormer Block 1: number of Conv1d layers")
     parser.add_argument("--k1_pool", type=str, default="avg",
                         help="WiFormer Block 1: 'avg' (global avg) or 'flatN' (keep N steps, e.g. flat4)")

@@ -72,26 +72,28 @@ DESIGN_VARIANTS = {
 }
 
 # ---- Optional: scale up (one change at a time, then combined) ----
-# step cost vs full measured on SSHAR-ESP (3 x 56 x 1000), CPU, batch 4
+# FLOPs vs full measured on SSHAR-ESP (3 x 56 x 1000)
 D128 = ["--d_model=128", "--k2_heads=8", "--k3_heads=8"]
 K1_DEEP = ["--k1_conv=3", "--k1_pool=flat4"]
 SCALE_VARIANTS = {
-    "k1_flat4": ("Block 1", "Conv1d keeps 4 steps (flat4) instead of global avg", ["--k1_pool=flat4"]),   # ~1.1x
-    "k1_deep": ("Block 1", "3 Conv1d layers + flat4", K1_DEEP),                                     # ~1.2x
-    "k2_l3": ("Block 2", "Block 2: 3 layers", ["--k2_layers=3"]),                                   # ~1.2x
-    "k3_l6": ("Block 3", "Block 3: 6 layers", ["--k3_layers=6"]),                                   # ~1.0x
-    "d96": ("Width", "D = 96, 6 heads", ["--d_model=96", "--k2_heads=6", "--k3_heads=6"]),          # ~1.3x
-    "d128": ("Width", "D = 128, 8 heads", D128),                                                    # ~1.8x
-    "d128_k1deep": ("Combined", "D = 128 + Block 1 deep + dropout 0.2",
-                    [*D128, "--feat=128", *K1_DEEP, "--dropout=0.2"]),                              # ~2.5x
-    # first config to try: wider everywhere, deeper Block 1/3, Block 2 depth unchanged
+    # Block 1 (cost = FLOPs vs full; D stays 64)
+    "k1_flat4": ("Block 1", "Conv1d keeps 4 steps (flat4) instead of global avg", ["--k1_pool=flat4"]),   # 1.0x
+    "k1_conv3": ("Block 1", "3 Conv1d layers", ["--k1_conv=3"]),                                   # 1.7x
+    "k1_deep": ("Block 1", "3 Conv1d layers + flat4", K1_DEEP),                                     # 1.7x
+    "k1_conv4": ("Block 1", "4 Conv1d layers + flat4", ["--k1_conv=4", "--k1_pool=flat4"]),       # 2.4x
+    # Block 2
+    "k2_l3": ("Block 2", "Block 2: 3 layers", ["--k2_layers=3"]),                                   # 1.2x
+    "k2_l4": ("Block 2", "Block 2: 4 layers", ["--k2_layers=4"]),                                   # 1.5x
+    # Block 3 (31 tokens -> extra layers are almost free)
+    "k3_l6": ("Block 3", "Block 3: 6 layers", ["--k3_layers=6"]),                                   # 1.0x
+    "k3_l8": ("Block 3", "Block 3: 8 layers", ["--k3_layers=8"]),                                   # 1.0x
+    # Combined, D = 64
+    "opt_b": ("Combined", "Option B: 3 Conv1d + flat4, Block 3 6 layers", [*K1_DEEP, "--k3_layers=6"]),         # 1.7x
+    "opt_a": ("Combined", "Option A: flat4, Block 3 6 layers", ["--k1_pool=flat4", "--k3_layers=6"]),      # 1.0x
+    # Wider (D = 128) -- much heavier, see commit history
+    "d128": ("Width", "D = 128, 8 heads", D128),                                                    # 2.4x
     "proposed": ("Combined", "D=128/8 heads, Block 1 feat 128 + 3 conv + flat4, Block 3 6 layers",
-                 [*D128, "--feat=128", *K1_DEEP, "--k3_layers=6"]),                                # ~2.5x
-    # same idea at ~baseline cost: Block 1 back to feat 64 / 2 conv (keeps flat4),
-    # adjacent subcarriers averaged in pairs (56 -> 28 tokens per Rx)
-    "lite": ("Combined", "D=128/8 heads, flat4, Block 3 6 layers, sub_group=2",
-             [*D128, "--k1_pool=flat4", "--k3_layers=6", "--sub_group=2"]),                      # ~1.1x FLOPs
-    "sub2": ("Input", "Average adjacent subcarrier pairs (56 -> 28)", ["--sub_group=2"]),
+                 [*D128, "--feat=128", *K1_DEEP, "--k3_layers=6"]),                                # 6.5x
 }
 
 VARIANTS = {**CORE_VARIANTS, **DESIGN_VARIANTS, **SCALE_VARIANTS}

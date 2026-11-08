@@ -113,7 +113,7 @@ class SubFeatureExtractor(nn.Module):
 
     Capacity knobs (temporal branch)
     --------------------------------
-    n_conv : 2 (default) or 3 -- the 3rd Conv1d(feat, feat, 3) keeps length W/4
+    n_conv : 2 (default), 3 or 4 -- extra Conv1d(feat, feat, 3) layers keep length W/4
     pool   : "avg"  -> global average over the W/4 steps (default, order-free)
              "flatN" (e.g. "flat4") -> average to N steps, then flatten, so the
              order inside the window survives (rising vs falling motion)
@@ -130,8 +130,8 @@ class SubFeatureExtractor(nn.Module):
 
         # Branch 1: temporal (Conv1d stack)
         if use_time:
-            if n_conv not in (2, 3):
-                raise ValueError(f"k1_conv must be 2 or 3, got {n_conv}")
+            if n_conv not in (2, 3, 4):
+                raise ValueError(f"k1_conv must be 2, 3 or 4, got {n_conv}")
             if pool == "avg":
                 n_pool = 1
             elif pool.startswith("flat") and pool[4:].isdigit():
@@ -147,7 +147,7 @@ class SubFeatureExtractor(nn.Module):
                 nn.BatchNorm1d(feat),
                 nn.GELU(),
             ]
-            if n_conv == 3:
+            for _ in range(n_conv - 2):
                 layers += [
                     nn.Conv1d(feat, feat, kernel_size=3, stride=1, padding=1),  # 16 -> 16
                     nn.BatchNorm1d(feat),
