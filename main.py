@@ -347,7 +347,7 @@ def parse_args():
             type=str,
             default="repeat",
             choices=["repeat", "user", "position"],
-            help="split: 'repeat' (random 7:1:1 train:val:test, stratified by class), 'user' (cross-user, uses --case_split) "
+            help="split: 'repeat' (SSHAR: protocol 7:1:2 by repetition; XRF55: random 7:1:1), 'user' (cross-user, uses --case_split) "
                  "or 'position' (SSHAR cross-position, --case_split 0..3 holds out pos %% 4 == case)"
         )
 

@@ -41,9 +41,32 @@ def _check_split_mode(split_mode):
     return split_mode
 
 
-# train : val : test ratio.
-#   repeat           -> all samples split 7:1:1, stratified by class.
-#   user / position  -> test = held-out users/positions (unchanged);
+# ---- SSHAR: fixed train/val/test rules of SSHAR_ESP_protocol.md (7:1:2) ----
+# Every model in the benchmark uses these rules -> 4480 / 640 / 1280 samples.
+SSHAR_VAL_SUBJECTS = [12, 13, 1, 2, 10]   # val subject of user case 0..4
+SSHAR_ALL_SUBJECTS = [1, 2, 3, 4, 9, 10, 11, 12, 13, 14]
+
+
+def sshar_repeat_split_of(pos, direction, rep):
+    """Protocol 3B: per (subject, action) 80 recordings -> 56 / 8 / 16."""
+    if direction == 0:                      # dir00: 10 repetitions
+        return "test" if rep > 8 else "val" if rep == 8 else "train"
+    if rep == 5:                            # dir01 / dir02: 5 repetitions
+        return "test"
+    val_dir = 1 if pos % 2 else 2           # odd pos -> dir01, even pos -> dir02
+    return "val" if rep == 4 and direction == val_dir else "train"
+
+
+def sshar_user_split_of(subject_id, user_case=0):
+    """Protocol 3A: 7 train / 1 val / 2 test subjects."""
+    if subject_id not in USER_CASES["sshar"][user_case]:
+        return "test"
+    return "val" if subject_id == SSHAR_VAL_SUBJECTS[user_case] else "train"
+
+
+# ---- Other splits (XRF55, SSHAR position) ----
+#   repeat           -> all samples split 7:1:1, stratified by class (XRF55).
+#   user / position  -> test = held-out users/positions;
 #                       the rest is split train:val = 7:1, stratified by class.
 # The split uses its own fixed seed, so it is identical across runs/models.
 SPLIT_RATIO = (7, 1, 1)
@@ -509,16 +532,17 @@ class _SSHARDatasetBase(Dataset):
                         continue
 
                     
+                    fixed = None   # split given directly by the protocol
+                    held_out = False
                     if self.split_mode == "repeat":
-                        # Chia ngau nhien 7:1:1 theo lop (xem _assign_splits)
-                        held_out = False
+                        # Protocol 3B: theo lan lap, 7:1:2
+                        fixed = sshar_repeat_split_of(pos, direction, rep)
                     elif self.split_mode == "position":
-                        # Chia theo vi tri: giu lai 2/8 vi tri lam test
+                        # Chia theo vi tri: giu lai 2/8 vi tri lam test, val = 1/8 phan con lai
                         held_out = pos % N_POSITION_CASES == self.case_split
                     else:
-                        # Chia theo nguoi
-                        user_num = int(subject.split("_")[1])
-                        held_out = user_num not in USER_CASES["sshar"][self.case_split]
+                        # Protocol 3A: theo nguoi, 7 / 1 / 2 nguoi
+                        fixed = sshar_user_split_of(int(subject.split("_")[1]), self.case_split)
 
                     rx_files = []
 
@@ -542,14 +566,18 @@ class _SSHARDatasetBase(Dataset):
                             "rep": rep,
                             "files": rx_files,
                             "held_out": held_out,
+                            "fixed": fixed,
                         }
                     )
 
-        splits = _assign_splits(
-            [s["label"] for s in self.samples],
-            [s["held_out"] for s in self.samples],
-            carve_test=self.split_mode == "repeat",
-        )
+        if self.split_mode == "position":
+            splits = _assign_splits(
+                [s["label"] for s in self.samples],
+                [s["held_out"] for s in self.samples],
+                carve_test=False,
+            )
+        else:
+            splits = [s["fixed"] for s in self.samples]
         self.samples = [s for s, sp in zip(self.samples, splits) if sp == self.split]
 
     # --------------------------------------------------------
@@ -1036,10 +1064,12 @@ def load_dataset(
     """
     Build train / val / test loaders.
 
-    Split (see SPLIT_RATIO / _assign_splits):
-      repeat          -> 7:1:1 stratified by class (fixed seed)
-      user / position -> test = held-out users / positions,
-                         rest split train:val = 7:1 stratified by class
+    Split:
+      SSHAR repeat    -> protocol 3B, 7:1:2 by repetition (4480 / 640 / 1280)
+      SSHAR user      -> protocol 3A, 7 / 1 / 2 subjects (case 0..4)
+      SSHAR position  -> test = held-out positions, rest train:val = 7:1
+      XRF55 repeat    -> 7:1:1 stratified by class (fixed seed)
+      XRF55 user      -> test = held-out users, rest train:val = 7:1
       ut_har          -> the dataset's own X_train / X_val / X_test files
 
     The best epoch is chosen on val; test is only used for the final report.
@@ -1057,7 +1087,17 @@ def load_dataset(
     case_split = kwargs.get("case_split", 0)
     split_mode = _check_split_mode(kwargs.get("split_mode", DEFAULT_SPLIT_MODE))
     ratio = ":".join(map(str, SPLIT_RATIO))
-    if split_mode == "user":
+    sshar = name.lower().startswith("sshar")
+    if split_mode == "user" and sshar:
+        users = USER_CASES["sshar"][case_split]
+        val_u = SSHAR_VAL_SUBJECTS[case_split]
+        test_u = sorted(set(SSHAR_ALL_SUBJECTS) - set(users))
+        print(f"Split mode = user (protocol 3A, 7:1:2), case = {case_split} | "
+              f"train: {sorted(set(users) - {val_u})} | val: [{val_u}] | test: {test_u}")
+    elif split_mode == "repeat" and sshar:
+        print("Split mode = repeat (protocol 3B, 7:1:2: dir00 rep1-7/8/9-10; "
+              "dir01/02 rep1-3 + rep4 of one dir / rep4 of the other dir / rep5)")
+    elif split_mode == "user":
         print(f"Split mode = user, case = {case_split} (val = 1/8 of train users' samples)")
     elif split_mode == "position":
         if not 0 <= case_split < N_POSITION_CASES:
