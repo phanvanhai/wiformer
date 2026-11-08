@@ -87,6 +87,11 @@ SCALE_VARIANTS = {
     # first config to try: wider everywhere, deeper Block 1/3, Block 2 depth unchanged
     "proposed": ("Combined", "D=128/8 heads, Block 1 feat 128 + 3 conv + flat4, Block 3 6 layers",
                  [*D128, "--feat=128", *K1_DEEP, "--k3_layers=6"]),                                # ~2.5x
+    # same idea at ~baseline cost: Block 1 back to feat 64 / 2 conv (keeps flat4),
+    # adjacent subcarriers averaged in pairs (56 -> 28 tokens per Rx)
+    "lite": ("Combined", "D=128/8 heads, flat4, Block 3 6 layers, sub_group=2",
+             [*D128, "--k1_pool=flat4", "--k3_layers=6", "--sub_group=2"]),                      # ~1.1x FLOPs
+    "sub2": ("Input", "Average adjacent subcarrier pairs (56 -> 28)", ["--sub_group=2"]),
 }
 
 VARIANTS = {**CORE_VARIANTS, **DESIGN_VARIANTS, **SCALE_VARIANTS}

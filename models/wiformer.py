@@ -408,6 +408,7 @@ class WiFormer(BaseModel):
         k2_pe="sub",
         k3_pos="alibi",
         ant_mode="first",
+        sub_group=1,
         **kwargs,
     ):
         super().__init__(input_shape=input_shape, num_classes=num_classes)
@@ -422,6 +423,13 @@ class WiFormer(BaseModel):
                 "Pass n_rx / n_ant / n_sub explicitly."
             )
         self.n_rx, self.n_ant, self.n_sub = n_rx, n_ant, n_sub
+        # sub_group > 1: average every `sub_group` adjacent subcarriers before
+        # Block 1 (neighbouring subcarriers are highly correlated). Divides the
+        # cost of Block 1 and the token count of Block 2 by sub_group.
+        if sub_group < 1 or n_sub % sub_group:
+            raise ValueError(f"WiFormer: n_sub={n_sub} not divisible by sub_group={sub_group}")
+        self.sub_group = sub_group
+        n_tok_sub = n_sub // sub_group
         self.sample_norm = sample_norm
         if ant_mode not in ("first", "all"):
             raise ValueError(f"WiFormer: ant_mode must be first/all, got '{ant_mode}'")
@@ -456,7 +464,7 @@ class WiFormer(BaseModel):
             n_conv=k1_conv, pool=k1_pool,
         )
         self.block2 = JointRxSubAttention(
-            n_sub, d_model, k2_heads, k2_layers, k2_ff, dropout, activation, norm_first,
+            n_tok_sub, d_model, k2_heads, k2_layers, k2_ff, dropout, activation, norm_first,
             n_rx=n_view, mode=k2_mode, pe=k2_pe,
         )
         self.block3 = TemporalTransformer(
@@ -502,6 +510,9 @@ class WiFormer(BaseModel):
             x = x.reshape(B, self.n_rx * self.n_ant, self.n_sub, T)
         else:
             x = x[:, :, 0]                                  # antenna[0] of each RX
+        if self.sub_group > 1:
+            R, S = x.shape[1], x.shape[2]
+            x = x.reshape(B, R, S // self.sub_group, self.sub_group, T).mean(dim=3)
         if self.sample_norm:
             # z-score per (rx, sub) per sample, along time
             mean = x.mean(dim=-1, keepdim=True)

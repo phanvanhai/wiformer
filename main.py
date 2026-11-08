@@ -323,6 +323,8 @@ def parse_args():
     parser.add_argument("--k3_heads", type=int, default=4, help="WiFormer Block 3: attention heads")
     parser.add_argument("--k3_ff", type=int, default=None, help="WiFormer Block 3: FFN width (default 4*D)")
     parser.add_argument("--dropout", type=float, default=0.1, help="WiFormer: dropout")
+    parser.add_argument("--sub_group", type=int, default=1,
+                        help="WiFormer: average every N adjacent subcarriers before Block 1 (56 -> 56/N tokens)")
     parser.add_argument("--window", type=int, default=64, help="WiFormer window W")
     parser.add_argument("--stride", type=int, default=32, help="WiFormer stride")
     parser.add_argument(
@@ -495,6 +497,7 @@ def main():
             k3_heads=args.k3_heads,
             k3_ff=args.k3_ff,
             dropout=args.dropout,
+            sub_group=args.sub_group,
         )
 
     model = get_model(
