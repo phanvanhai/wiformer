@@ -111,6 +111,13 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--accum_steps",
+        type=int,
+        default=1,
+        help="Gradient accumulation steps (effective batch = batch_size * accum_steps)",
+    )
+
+    parser.add_argument(
         "--patience",
         type=int,
         default=10,
@@ -531,7 +538,7 @@ def main():
     }
     print(
         f"Optimizer : {args.optimizer} (lr={args.lr}, wd={args.weight_decay})  "
-        f"Batch: {args.batch_size}  "
+        f"Batch: {args.batch_size} x accum {args.accum_steps}  "
         f"Scheduler: {scheduler_cfg['name'] if scheduler_cfg else 'none'} "
         f"(warmup={args.warmup_epochs})"
     )
@@ -613,6 +620,7 @@ def main():
         scheduler_cfg=scheduler_cfg,
         optimizer_cfg=optimizer_cfg,
         patience=args.patience,
+        accum_steps=args.accum_steps,
     )
     training_time = time.time() - start_time
     # --------------------------------------------------------

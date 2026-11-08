@@ -111,9 +111,14 @@ def train_one_epoch(
     criterion,
     optimizer,
     device,
+    accum_steps=1,
 ):
     """
     Train one epoch.
+
+    accum_steps > 1: gradient accumulation -- the optimizer steps every
+    `accum_steps` mini-batches (effective batch = batch_size * accum_steps),
+    so a large model fits in GPU memory with a small per-step batch.
 
     Returns
     -------
@@ -127,16 +132,20 @@ def train_one_epoch(
     correct = 0
     total = 0
 
-    for x, y in loader:
+    accum_steps = max(1, int(accum_steps or 1))
+    n_batches = len(loader)
+    optimizer.zero_grad()
+
+    for i, (x, y) in enumerate(loader, start=1):
         x = x.to(device)
         y = y.to(device)
 
-        optimizer.zero_grad()
-
         output = model(x)
         loss = criterion(output, y)
-        loss.backward()
-        optimizer.step()
+        (loss / accum_steps).backward()
+        if i % accum_steps == 0 or i == n_batches:
+            optimizer.step()
+            optimizer.zero_grad()
 
         running_loss += loss.item()
         pred = output.argmax(dim=1)
@@ -224,6 +233,7 @@ def train(
     scheduler_cfg=None,
     optimizer_cfg=None,
     patience=10,
+    accum_steps=1,
 ):
     """
     Train model.
@@ -271,6 +281,7 @@ def train(
             criterion=criterion,
             optimizer=optimizer,
             device=device,
+            accum_steps=accum_steps,
         )
 
         val_loss, val_acc, _, _ = evaluate(
