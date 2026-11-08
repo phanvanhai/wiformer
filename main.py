@@ -265,7 +265,7 @@ def parse_args():
     parser.add_argument(
         "--k3_layers",
         type=int,
-        default=4,
+        default=6,
         help="WiFormer: number of layers in Block 3 (temporal Transformer)",
     )
 
@@ -311,12 +311,12 @@ def parse_args():
         action="store_true",
         help="WiFormer: disable per-sample z-score",
     )
-    # ---- WiFormer capacity (defaults = current model) ----
+    # ---- WiFormer capacity (defaults = option B: 3 Conv1d + flat4, Block 3 6 layers) ----
     parser.add_argument("--d_model", type=int, default=64, help="WiFormer: token dim D (all blocks)")
     parser.add_argument("--feat", type=int, default=64, help="WiFormer Block 1: Conv1d output channels")
-    parser.add_argument("--k1_conv", type=int, default=2, choices=[2, 3, 4],
+    parser.add_argument("--k1_conv", type=int, default=3, choices=[2, 3, 4],
                         help="WiFormer Block 1: number of Conv1d layers")
-    parser.add_argument("--k1_pool", type=str, default="avg",
+    parser.add_argument("--k1_pool", type=str, default="flat4",
                         help="WiFormer Block 1: 'avg' (global avg) or 'flatN' (keep N steps, e.g. flat4)")
     parser.add_argument("--k2_heads", type=int, default=4, help="WiFormer Block 2: attention heads")
     parser.add_argument("--k2_ff", type=int, default=None, help="WiFormer Block 2: FFN width (default 4*D)")

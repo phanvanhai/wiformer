@@ -41,7 +41,7 @@ import sys
 #   Block 2 -> mean over the Rx x Sub tokens
 #   Block 3 -> mean over the windows
 CORE_VARIANTS = {
-    "full": ("Full", "CSI-WiFormer (all blocks)", []),
+    "full": ("Full", "CSI-WiFormer, option B (all blocks)", []),
     "wo_fft": ("Block 1", "w/o FFT branch (Conv1d only)", ["--k1_branch=time"]),
     "wo_conv": ("Block 1", "w/o Conv1d branch (FFT only)", ["--k1_branch=freq"]),
     "wo_block1": ("Block 1", "w/o Block 1 (Linear(W,D) on raw window)", ["--k1_branch=none"]),
@@ -72,40 +72,42 @@ DESIGN_VARIANTS = {
 }
 
 # ---- Optional: scale up (one change at a time, then combined) ----
-# FLOPs vs full measured on SSHAR-ESP (3 x 56 x 1000)
+# These were run BEFORE option B became the default, so each one is pinned to the
+# old base (2 Conv1d + avg pool, Block 3 4 layers) to keep its meaning.
+# FLOPs vs the old base measured on SSHAR-ESP (3 x 56 x 1000)
+OLD = ["--k1_conv=2", "--k1_pool=avg", "--k3_layers=4"]
 D128 = ["--d_model=128", "--k2_heads=8", "--k3_heads=8"]
 K1_DEEP = ["--k1_conv=3", "--k1_pool=flat4"]
 SCALE_VARIANTS = {
-    # Block 1 (cost = FLOPs vs full; D stays 64)
-    "k1_flat4": ("Block 1", "Conv1d keeps 4 steps (flat4) instead of global avg", ["--k1_pool=flat4"]),   # 1.0x
-    "k1_conv3": ("Block 1", "3 Conv1d layers", ["--k1_conv=3"]),                                   # 1.7x
-    "k1_deep": ("Block 1", "3 Conv1d layers + flat4", K1_DEEP),                                     # 1.7x
-    "k1_conv4": ("Block 1", "4 Conv1d layers + flat4", ["--k1_conv=4", "--k1_pool=flat4"]),       # 2.4x
+    "old_full": ("Old base", "Old default: 2 Conv1d + avg, Block 3 4 layers", OLD),                  # 1.0x
+    # Block 1 (D stays 64)
+    "k1_flat4": ("Block 1", "Conv1d keeps 4 steps (flat4) instead of global avg", [*OLD, "--k1_pool=flat4"]),  # 1.0x
+    "k1_conv3": ("Block 1", "3 Conv1d layers", [*OLD, "--k1_conv=3"]),                                      # 1.7x
+    "k1_deep": ("Block 1", "3 Conv1d layers + flat4", [*OLD, *K1_DEEP]),                                    # 1.7x
+    "k1_conv4": ("Block 1", "4 Conv1d layers + flat4", [*OLD, "--k1_conv=4", "--k1_pool=flat4"]),          # 2.4x
     # Block 2
-    "k2_l3": ("Block 2", "Block 2: 3 layers", ["--k2_layers=3"]),                                   # 1.2x
-    "k2_l4": ("Block 2", "Block 2: 4 layers", ["--k2_layers=4"]),                                   # 1.5x
+    "k2_l3": ("Block 2", "Block 2: 3 layers", [*OLD, "--k2_layers=3"]),                                      # 1.2x
+    "k2_l4": ("Block 2", "Block 2: 4 layers", [*OLD, "--k2_layers=4"]),                                      # 1.5x
     # Block 3 (31 tokens -> extra layers are almost free)
-    "k3_l6": ("Block 3", "Block 3: 6 layers", ["--k3_layers=6"]),                                   # 1.0x
-    "k3_l8": ("Block 3", "Block 3: 8 layers", ["--k3_layers=8"]),                                   # 1.0x
+    "k3_l6": ("Block 3", "Block 3: 6 layers", [*OLD, "--k3_layers=6"]),                                      # 1.0x
+    "k3_l8": ("Block 3", "Block 3: 8 layers", [*OLD, "--k3_layers=8"]),                                      # 1.0x
     # Combined, D = 64
-    "opt_b": ("Combined", "Option B: 3 Conv1d + flat4, Block 3 6 layers", [*K1_DEEP, "--k3_layers=6"]),         # 1.7x
-    "opt_a": ("Combined", "Option A: flat4, Block 3 6 layers", ["--k1_pool=flat4", "--k3_layers=6"]),      # 1.0x
+    "opt_b": ("Combined", "Option B (= current default 'full')", [*K1_DEEP, "--k3_layers=6"]),             # 1.7x
+    "opt_a": ("Combined", "Option A: flat4, Block 3 6 layers", [*OLD, "--k1_pool=flat4", "--k3_layers=6"]),  # 1.0x
     # Wider (D = 128) -- much heavier, see commit history
-    "d128": ("Width", "D = 128, 8 heads", D128),                                                    # 2.4x
+    "d128": ("Width", "D = 128, 8 heads", [*OLD, *D128]),                                                    # 2.4x
     "proposed": ("Combined", "D=128/8 heads, Block 1 feat 128 + 3 conv + flat4, Block 3 6 layers",
-                 [*D128, "--feat=128", *K1_DEEP, "--k3_layers=6"]),                                # 6.5x
+                 [*D128, "--feat=128", *K1_DEEP, "--k3_layers=6"]),                                        # 6.5x
 }
 
-# ---- Windowing ablation on option B (one of the paper's contributions) ----
-# Reference = opt_b (W=64, S=32 -> 30 windows with 50% overlap).
-OPT_B = [*K1_DEEP, "--k3_layers=6"]
+# ---- Windowing ablation (one of the paper's contributions) ----
+# Reference = full (option B, W=64, S=32 -> 30 windows with 50% overlap).
 WINDOW_VARIANTS = {
     # whole 5 s recording as ONE window: Block 1 on 1000 samples, Block 2 once,
     # Block 3 sees a single token (so no temporal modelling across windows)
-    "b_nowin": ("Window", "Option B without windowing (W = T, 1 window)",
-                [*OPT_B, "--window=0"]),                                     # 0.35x vs opt_b
-    "b_nooverlap": ("Window", "Option B, windows without overlap (W = S = 64, 15 windows)",
-                    [*OPT_B, "--window=64", "--stride=64"]),                                     # 0.5x vs opt_b
+    "b_nowin": ("Window", "No windowing (W = T, 1 window)", ["--window=0"]),                   # 0.35x vs full
+    "b_nooverlap": ("Window", "Windows without overlap (W = S = 64, 15 windows)",
+                    ["--window=64", "--stride=64"]),                                             # 0.5x vs full
 }
 
 VARIANTS = {**CORE_VARIANTS, **DESIGN_VARIANTS, **SCALE_VARIANTS, **WINDOW_VARIANTS}
@@ -114,8 +116,7 @@ SETS = {
     # "full" is kept so the summary can compute delta_acc
     "design": ["full", *DESIGN_VARIANTS],
     "scale": ["full", *SCALE_VARIANTS],
-    # reference first: delta_acc is computed against opt_b here
-    "window": ["opt_b", *WINDOW_VARIANTS],
+    "window": ["full", *WINDOW_VARIANTS],
     "all": list(VARIANTS),
 }
 
@@ -134,7 +135,7 @@ def parse_args():
     p.add_argument("--set", type=str, default="core", choices=list(SETS),
                    help="core = remove one block at a time (default), "
                         "design = design choices inside blocks, "
-                        "scale = bigger blocks, window = windowing on option B, "
+                        "scale = bigger blocks, window = windowing (no window / no overlap), "
                         "all = everything")
     p.add_argument("--variants", nargs="+", default=None,
                    help="Explicit list of variants (overrides --set)")
@@ -230,7 +231,7 @@ def main():
         for title, table in (("core (remove one block at a time)", CORE_VARIANTS),
                              ("design (choices inside blocks)", DESIGN_VARIANTS),
                              ("scale (bigger blocks)", SCALE_VARIANTS),
-                             ("window (windowing on option B, reference opt_b)", WINDOW_VARIANTS)):
+                             ("window (windowing, reference full)", WINDOW_VARIANTS)):
             print(f"[{title}]")
             for name, (group, desc, cli) in table.items():
                 print(f"  {name:<14}{group:<9}{desc:<48}{' '.join(cli)}")
