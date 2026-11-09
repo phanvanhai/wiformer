@@ -8,11 +8,32 @@
 
 ## 1. Tổng quan
 
-CSI-WiFormer là kiến trúc học máy cho bài toán Human Activity Recognition (HAR) sử dụng tín hiệu WiFi CSI (Channel State Information). Ý tưởng chung: **một hành động được nhận dạng qua chuỗi các "bức tranh không gian" biến đổi theo thời gian**. Kiến trúc được thiết kế dựa trên 3 insight:
+CSI-WiFormer là kiến trúc học máy cho bài toán Human Activity Recognition (HAR) sử dụng tín hiệu WiFi CSI (Channel State Information).
+
+### 1.1 Ý tưởng chính
+
+Một hành động được nhận dạng qua **chuỗi các "bức tranh không gian" biến đổi theo thời gian**. Mô hình trả lời lần lượt ba câu hỏi:
+
+| Bước | Câu hỏi | Cách làm |
+|---|---|---|
+| Cắt đoạn | Tín hiệu trong từng khoảng thời gian ngắn trông như thế nào? | Chia tín hiệu thành các đoạn ngắn chồng lấn, trích đặc trưng mỗi đoạn |
+| Không gian | Trong một đoạn, những Rx và subcarrier nào đang phản ánh chuyển động? | Attention giữa các (Rx, subcarrier) → một "bức tranh không gian" cho mỗi đoạn |
+| Thời gian | Các bức tranh không gian thay đổi ra sao qua các đoạn? | Attention giữa các đoạn → một vector đại diện cho cả hành động → phân loại |
+
+```
+tín hiệu CSI ──► các đoạn chồng lấn ──► bức tranh không gian s_i của từng đoạn ──► chuỗi s_0 … s_n ──► hành động
+                  (Khối 1)               (Khối 2)                                   (Khối 3)
+```
+
+### 1.2 Ba insight thiết kế
+
+Kiến trúc được thiết kế dựa trên 3 insight:
 
 1. **Hành động là chuỗi các đoạn ngắn nối tiếp → chia tín hiệu thành window chồng lấn (Khối 1)**: chuỗi CSI 5 s (T = 1000 mẫu) được cắt bằng sliding window W = 64 mẫu (0.32 s), bước S = 32 mẫu (0.16 s), thành **30 window chồng nhau 50%** (w0: 0–0.32 s, w1: 0.16–0.48 s, …, w29: 4.68–5.0 s). Hai window liền kề chia sẻ 32 mẫu, nên một micro-pattern nằm ở ranh giới window vẫn được biểu diễn nguyên vẹn trong ít nhất một window, và các window liền kề có tính liên tục. Khối 1 trích đặc trưng của từng đoạn (Rx, sub, window) bằng hai nhánh song song: Conv1d (hình dạng tín hiệu theo thời gian) và FFT (thành phần tần số).
 2. **Tại mỗi thời điểm, chỉ một số (Rx, subcarrier) nhạy với chuyển động → joint attention không gian trong từng window (Khối 2)**: tùy vị trí người, hướng di chuyển và multipath, ở mỗi window chỉ một số subcarrier của một số Rx "bắt được" chuyển động (vd. lúc 0.5 s là Rx2/sub40, lúc 1.0 s là Rx1/sub12). Khối 2 cho N_rx × N_sub token của cùng một window attend lẫn nhau rồi tóm tắt thành **1 vector s_i — "bức tranh không gian" của window i**. Không dùng PE_rx (chỉ có PE_sub), nên mô hình phân biệt Rx qua nội dung tín hiệu chứ không qua chỉ số Rx.
 3. **Hành động hình thành từ cách các bức tranh không gian biến đổi theo thời gian → Transformer trên chuỗi s_0 … s_29 (Khối 3)**: một window đơn lẻ không đủ để nhận dạng hành động; cần biết s_i thay đổi thế nào qua các window (vd. "s_3 trước, s_6 theo cách này" → đứng lên). Trong Khối 3, mọi cặp (s_i, s_j) attend trực tiếp với nhau, token CLS tổng hợp toàn bộ chuỗi để đưa vào classifier. ALiBi cộng bias `−m · |i − j|` vào attention score: window gần nhau ít bị giảm trọng số hơn window xa, và mô hình không bị gắn với vị trí tuyệt đối của hành động trong mẫu 5 s.
+
+### 1.3 Ba khối của mô hình
 
 Mô hình gồm 3 khối nối tiếp:
 
