@@ -1,5 +1,5 @@
 """
-CSI-WiFormer (v5, option B defaults) - see WiFormer_Architecture_Implemented.md
+CSI-WiFormer (v5) - see WiFormer_Architecture_Implemented.md
 
 Input (from datasets.py)
 ------------------------

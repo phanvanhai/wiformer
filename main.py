@@ -311,7 +311,7 @@ def parse_args():
         action="store_true",
         help="WiFormer: disable per-sample z-score",
     )
-    # ---- WiFormer capacity (defaults = option B: 3 Conv1d + flat4, Block 3 6 layers) ----
+    # ---- WiFormer capacity (defaults: 3 Conv1d + flat4, Block 2 2 layers, Block 3 6 layers) ----
     parser.add_argument("--d_model", type=int, default=64, help="WiFormer: token dim D (all blocks)")
     parser.add_argument("--feat", type=int, default=64, help="WiFormer Block 1: Conv1d output channels")
     parser.add_argument("--k1_conv", type=int, default=3, choices=[2, 3, 4],

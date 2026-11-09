@@ -41,7 +41,7 @@ import sys
 #   Block 2 -> mean over the Rx x Sub tokens
 #   Block 3 -> mean over the windows
 CORE_VARIANTS = {
-    "full": ("Full", "CSI-WiFormer, option B (all blocks)", []),
+    "full": ("Full", "CSI-WiFormer (all blocks)", []),
     "wo_fft": ("Block 1", "w/o FFT branch (Conv1d only)", ["--k1_branch=time"]),
     "wo_conv": ("Block 1", "w/o Conv1d branch (FFT only)", ["--k1_branch=freq"]),
     "wo_block1": ("Block 1", "w/o Block 1 (Linear(W,D) on raw window)", ["--k1_branch=none"]),
@@ -72,7 +72,7 @@ DESIGN_VARIANTS = {
 }
 
 # ---- Optional: scale up (one change at a time, then combined) ----
-# These were run BEFORE option B became the default, so each one is pinned to the
+# These were run BEFORE the current default (3 Conv1d + flat4, Block 3 6 layers), so each is pinned to the
 # old base (2 Conv1d + avg pool, Block 3 4 layers) to keep its meaning.
 # FLOPs vs the old base measured on SSHAR-ESP (3 x 56 x 1000)
 OLD = ["--k1_conv=2", "--k1_pool=avg", "--k3_layers=4"]
@@ -92,7 +92,7 @@ SCALE_VARIANTS = {
     "k3_l6": ("Block 3", "Block 3: 6 layers", [*OLD, "--k3_layers=6"]),                                      # 1.0x
     "k3_l8": ("Block 3", "Block 3: 8 layers", [*OLD, "--k3_layers=8"]),                                      # 1.0x
     # Combined, D = 64
-    "opt_b": ("Combined", "Option B (= current default 'full')", [*K1_DEEP, "--k3_layers=6"]),             # 1.7x
+    "opt_b": ("Combined", "3 Conv1d + flat4, Block 3 6 layers (= full)", [*K1_DEEP, "--k3_layers=6"]),             # 1.7x
     "opt_a": ("Combined", "Option A: flat4, Block 3 6 layers", [*OLD, "--k1_pool=flat4", "--k3_layers=6"]),  # 1.0x
     # Wider (D = 128) -- much heavier, see commit history
     "d128": ("Width", "D = 128, 8 heads", [*OLD, *D128]),                                                    # 2.4x
@@ -101,7 +101,7 @@ SCALE_VARIANTS = {
 }
 
 # ---- Windowing ablation (one of the paper's contributions) ----
-# Reference = full (option B, W=64, S=32 -> 30 windows with 50% overlap).
+# Reference = full (W=64, S=32 -> 30 windows with 50% overlap).
 WINDOW_VARIANTS = {
     # whole 5 s recording as ONE window: Block 1 on 1000 samples, Block 2 once,
     # Block 3 sees a single token (so no temporal modelling across windows)

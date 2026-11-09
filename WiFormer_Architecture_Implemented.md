@@ -2,7 +2,7 @@
 
 > Mô tả đúng theo code hiện tại ở [models/wiformer.py](models/wiformer.py), [main.py](main.py),
 > [datasets.py](datasets.py), [train.py](train.py) và [ablation.py](ablation.py) (nhánh `ablation`).
-> Cấu hình mặc định là **phương án B**: Khối 1 gồm 3 lớp Conv1d + flat4, Khối 3 có 6 lớp.
+> Cấu hình mặc định: Khối 1 gồm 3 lớp Conv1d + flat4, Khối 2 có 2 lớp, Khối 3 có 6 lớp.
 > Ký hiệu: `B` batch, `R` = N_rx, `A` = N_ant, `S` = N_sub, `T` số mẫu thời gian,
 > `W` window, `St` stride, `D` d_model, `H` số head.
 
@@ -234,11 +234,11 @@ biến thể `old_full` hoặc truyền `--k1_conv 2 --k1_pool avg --k3_layers 4
 
 ## 10. Ablation ([ablation.py](ablation.py))
 
-Mỗi biến thể chỉ đổi một yếu tố so với `full` (= phương án B). Kết quả lưu ở `<result_root>/<dataset>_wiformer_<variant>`.
+Mỗi biến thể chỉ đổi một yếu tố so với `full` (mô hình đầy đủ). Kết quả lưu ở `<result_root>/<dataset>_wiformer_<variant>`.
 
 | Biến thể | Thay đổi | Tham số (sshar_esp) | FLOPs so với full |
 |---|---|---|---|
-| `full` | phương án B | 452,584 | 1.0x |
+| `full` | mô hình đầy đủ | 452,584 | 1.0x |
 | `wo_fft` | chỉ nhánh Conv1d | 446,376 | |
 | `wo_conv` | chỉ nhánh FFT | 410,824 | |
 | `wo_block1` | `Linear(W → D)` trên window thô | 408,712 | |
