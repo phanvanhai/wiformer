@@ -166,119 +166,182 @@ Input raw      (B, N_rx, N_ant, N_sub, T)    nếu dataset có nhiều anten
 
 ---
 
-## 5. Sơ đồ UML
+## 5. Hình kiến trúc
 
-### 5.1 Sơ đồ lớp (class diagram)
+Các hình viết bằng PlantUML, đi từ tổng quan (Hình 1) đến chi tiết từng khối (Hình 2–4) và một lớp Transformer encoder dùng chung cho Khối 2 và Khối 3 (Hình 5). Shape ghi theo SSHAR-ESP: N_rx = 3, N_sub = 56, T = 1000, D = 64.
 
-```mermaid
-classDiagram
-    direction TB
-    class BaseModel {
-        +input_shape
-        +num_classes
-        +forward(x)
-    }
-    class WiFormer {
-        +int n_rx
-        +int n_ant
-        +int n_sub
-        +int n_win
-        +bool sample_norm
-        +str ant_mode
-        +SubFeatureExtractor block1
-        +JointRxSubAttention block2
-        +TemporalTransformer block3
-        +Sequential classifier
-        +preprocess(x) Tensor
-        +forward(x) Tensor
-        -init_weights()
-    }
-    class SubFeatureExtractor {
-        +int window = 64
-        +int stride = 32
-        +Sequential encoder : 3x Conv1d-BN-GELU, AvgPool 4
-        +Linear proj_time : 256 to D
-        +Linear proj_freq : W/2 to D
-        +Linear fuse : 2D to D
-        +forward(x) Tensor
-    }
-    class JointRxSubAttention {
-        +str mode = joint
-        +str pe = sub
-        +Embedding embed_sub : N_sub x D/2
-        +Linear pe_proj : D/2 to D
-        +Parameter cls_token : 1x1xD
-        +TransformerEncoder attn_layer : 2 layers
-        -pos(R, S) Tensor
-        +forward(x) Tensor
-    }
-    class TemporalTransformer {
-        +str pos = alibi
-        +int n_layers = 6
-        +Parameter cls_token : 1x1xD
-        +TransformerEncoder encoder : 6 layers
-        +Tensor alibi_slopes : H
-        +build_alibi_bias(L) Tensor
-        +forward(x) Tensor
-    }
-    class SafeTransformerEncoderLayer {
-        +forward(src, src_mask) Tensor
-        -safe_sa(x, attn_mask) Tensor
-    }
-    class TransformerEncoderLayer {
-        PyTorch nn
-    }
-    BaseModel <|-- WiFormer
-    TransformerEncoderLayer <|-- SafeTransformerEncoderLayer
-    WiFormer *-- SubFeatureExtractor : block1
-    WiFormer *-- JointRxSubAttention : block2
-    WiFormer *-- TemporalTransformer : block3
-    JointRxSubAttention *-- "2" SafeTransformerEncoderLayer
-    TemporalTransformer *-- "6" SafeTransformerEncoderLayer
+### Hình 1 — Tổng quan
+
+```plantuml
+@startuml
+skinparam defaultFontName Arial
+skinparam ActivityBorderColor #555555
+skinparam ArrowColor #555555
+title CSI-WiFormer — tổng quan
+
+start
+:CSI đầu vào
+(B, N_rx·N_ant·N_sub, T = 1000);
+:Tiền xử lý
+chọn anten[0] · z-score theo (rx, sub)
+(B, N_rx, N_sub, T);
+#E3F2FD:Khối 1 — Trích đặc trưng cục bộ
+sliding window W = 64, S = 32 → 30 window (chồng 50%)
+nhánh Conv1d ‖ nhánh FFT → fuse
+(B, N_rx, 30, N_sub, D);
+#FFF3E0:Khối 2 — Joint (Rx × Sub) attention
+mỗi window: 168 token + CLS, PE_sub, 2 lớp
+(B, 30, D);
+#E8F5E9:Khối 3 — Temporal Transformer
+30 window token + CLS, ALiBi, 6 lớp
+(B, D);
+#F3E5F5:Classifier
+LayerNorm · Dropout · Linear
+(B, n_class);
+stop
+@enduml
 ```
 
-`SafeTransformerEncoderLayer` gọi thẳng `F.multi_head_attention_forward` để bỏ qua fast path của PyTorch ở eval mode (fast path xử lý sai mask ALiBi theo từng head).
+### Hình 2 — Khối 1: trích đặc trưng cục bộ (Conv1d ‖ FFT)
 
-### 5.2 Sơ đồ luồng dữ liệu (activity diagram)
+```plantuml
+@startuml
+skinparam defaultFontName Arial
+skinparam ActivityBackgroundColor #E3F2FD
+skinparam ActivityBorderColor #555555
+skinparam ArrowColor #555555
+title Khối 1 — SubFeatureExtractor (trọng số dùng chung cho mọi (Rx, window, sub))
 
-```mermaid
-flowchart TD
-    IN["CSI input<br/>(B, N_rx·N_ant·N_sub, T)"] --> PRE["Preprocess<br/>chọn anten[0] · z-score per (rx, sub)<br/>(B, N_rx, N_sub, T)"]
-    PRE --> UNF["Unfold W=64, S=32<br/>(B·N_rx·n_win·N_sub, 64)"]
-
-    subgraph K1["Khối 1 — SubFeatureExtractor (shared weights)"]
-        UNF --> C1["Conv1d 1→32, k8 s2 · BN · GELU"]
-        C1 --> C2["Conv1d 32→64, k4 s2 · BN · GELU"]
-        C2 --> C3["Conv1d 64→64, k3 s1 · BN · GELU"]
-        C3 --> P4["AvgPool(4) · flatten → 256"]
-        P4 --> PT["proj_time: Linear(256→D)"]
-        UNF --> FFT["rfft · log1p|X| · bỏ DC → 32"]
-        FFT --> PF["proj_freq: Linear(32→D)"]
-        PT --> CAT["concat (2D)"]
-        PF --> CAT
-        CAT --> FU["fuse: Linear(2D→D)"]
-    end
-
-    FU --> R1["(B, N_rx, n_win, N_sub, D)"]
-
-    subgraph K2["Khối 2 — JointRxSubAttention (mỗi window)"]
-        R1 --> TOK["N_rx·N_sub token + PE_sub"]
-        TOK --> CLS2["+ CLS → 1 + N_rx·N_sub token"]
-        CLS2 --> E2["Transformer encoder × 2"]
-        E2 --> O2["lấy CLS"]
-    end
-
-    O2 --> R2["(B, n_win, D)"]
-
-    subgraph K3["Khối 3 — TemporalTransformer"]
-        R2 --> CLS3["+ CLS → 1 + n_win token"]
-        CLS3 --> E3["Transformer encoder × 6<br/>ALiBi bias"]
-        E3 --> O3["lấy CLS"]
-    end
-
-    O3 --> CLF["Classifier<br/>LayerNorm · Dropout · Linear(D→n_class)"]
-    CLF --> OUT["logits (B, n_class)"]
+start
+:(B, N_rx, N_sub, T);
+:unfold(W = 64, S = 32) → 30 window / chuỗi
+gộp thành N = B·N_rx·30·N_sub đoạn
+(N, 64);
+fork
+  :<b>Nhánh thời gian</b>
+  Conv1d 1→32, k = 8, s = 2 · BN · GELU
+  (N, 32, 32);
+  :Conv1d 32→64, k = 4, s = 2 · BN · GELU
+  (N, 64, 16);
+  :Conv1d 64→64, k = 3, s = 1 · BN · GELU
+  (N, 64, 16);
+  :AdaptiveAvgPool1d(4) · flatten
+  4 bước × 64 kênh, mỗi bước ~80 ms
+  (N, 256);
+  :proj_time: Linear(256 → D)
+  v_time (N, D);
+fork again
+  :<b>Nhánh tần số</b>
+  rfft(W = 64) → 33 bin;
+  :log1p(abs(X)) · bỏ bin DC
+  (N, 32);
+  :proj_freq: Linear(32 → D)
+  v_freq (N, D);
+end fork
+:concat [v_time ‖ v_freq]
+(N, 2D);
+:fuse: Linear(2D → D)
+(N, D);
+:reshape
+(B, N_rx, 30, N_sub, D);
+stop
+@enduml
 ```
+
+### Hình 3 — Khối 2: joint (Rx × Sub) attention trong từng window
+
+```plantuml
+@startuml
+skinparam defaultFontName Arial
+skinparam ActivityBackgroundColor #FFF3E0
+skinparam ActivityBorderColor #555555
+skinparam ArrowColor #555555
+title Khối 2 — JointRxSubAttention (dùng chung cho cả 30 window)
+
+start
+:(B, N_rx, 30, N_sub, D);
+:Tách theo window, gộp Rx × Sub thành chuỗi token
+(B·30, N_rx·N_sub = 168, D);
+:Cộng PE_sub
+Embedding(N_sub, D/2) → Linear(D/2 → D)
+cùng một PE cho subcarrier j ở mọi Rx (không có PE_rx);
+:Thêm token CLS ở đầu
+(B·30, 169, D);
+:Transformer encoder (pre-LN) × 2
+H = 4, d_head = 16, FFN = 256
+attention giữa toàn bộ 169 token (xem Hình 5);
+:Lấy output của CLS
+(B, 30, D);
+stop
+@enduml
+```
+
+### Hình 4 — Khối 3: Temporal Transformer và Classifier
+
+```plantuml
+@startuml
+skinparam defaultFontName Arial
+skinparam ActivityBackgroundColor #E8F5E9
+skinparam ActivityBorderColor #555555
+skinparam ArrowColor #555555
+title Khối 3 — TemporalTransformer
+
+start
+:Chuỗi window token s_1 … s_30
+(B, 30, D);
+:Thêm token CLS ở đầu
+(B, 31, D);
+:ALiBi bias (không có tham số)
+bias[h, i, j] = −m_h · abs(i − j),  m_h = 2^(−8h / H)
+tính trên cả 31 token, CLS ở vị trí 0;
+:Transformer encoder (pre-LN) × 6
+H = 4, d_head = 16, FFN = 256
+ALiBi cộng vào attention score (xem Hình 5);
+:Lấy output của CLS
+(B, D);
+#F3E5F5:Classifier
+LayerNorm(D) → Dropout(0.1) → Linear(D → n_class)
+(B, n_class);
+stop
+@enduml
+```
+
+### Hình 5 — Một lớp Transformer encoder (pre-LN)
+
+```plantuml
+@startuml
+skinparam defaultFontName Arial
+skinparam rectangleBorderColor #555555
+skinparam rectangleBackgroundColor #FAFAFA
+skinparam ArrowColor #555555
+title Transformer encoder layer (pre-LN), dùng ở Khối 2 (× 2) và Khối 3 (× 6)
+
+rectangle "x  (L token × D)" as X
+rectangle "LayerNorm" as LN1
+rectangle "Multi-head self-attention\nH = 4, d_head = 16\n(Khối 3: + ALiBi bias)" as MHA
+rectangle "Dropout" as DR1
+circle "+" as ADD1
+rectangle "LayerNorm" as LN2
+rectangle "FFN\nLinear(D → 256) · GELU · Dropout · Linear(256 → D)" as FFN
+rectangle "Dropout" as DR2
+circle "+" as ADD2
+rectangle "output  (L token × D)" as Y
+
+X --> LN1
+LN1 --> MHA
+MHA --> DR1
+DR1 --> ADD1
+X --> ADD1 : residual
+ADD1 --> LN2
+LN2 --> FFN
+FFN --> DR2
+DR2 --> ADD2
+ADD1 --> ADD2 : residual
+ADD2 --> Y
+@enduml
+```
+
+Trong code, lớp này là `SafeTransformerEncoderLayer`: giống `nn.TransformerEncoderLayer` của PyTorch nhưng luôn tính attention bằng `F.multi_head_attention_forward`, để mask ALiBi theo từng head được xử lý đúng ở eval mode.
 
 ---
 
