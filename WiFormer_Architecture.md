@@ -12,7 +12,11 @@ CSI-WiFormer là kiến trúc học máy cho bài toán Human Activity Recogniti
 
 ### 1.1 Ý tưởng chính
 
-Một hành động được nhận dạng qua **chuỗi các "bức tranh không gian" biến đổi theo thời gian**. Mô hình trả lời lần lượt ba câu hỏi:
+Một hành động được nhận dạng qua **chuỗi các "bức tranh không gian" biến đổi theo thời gian**.
+
+Lý do phải nhìn theo từng đoạn thời gian: mức độ nhạy với chuyển động của các subcarrier và các anten (Rx) **không cố định mà thay đổi theo thời gian**. Khi người di chuyển, vị trí và hướng của cơ thể so với từng cặp Tx–Rx thay đổi, nên lúc này một nhóm (Rx, subcarrier) phản ánh rõ chuyển động, lúc khác lại là nhóm khác. Nếu xử lý cả chuỗi 5 s cùng lúc, các thay đổi cục bộ này bị trộn lẫn. Vì vậy mô hình chia tín hiệu thành các đoạn ngắn, xác định nhóm nhạy trong từng đoạn, rồi theo dõi nhóm nhạy đó dịch chuyển qua các đoạn.
+
+Mô hình trả lời lần lượt ba câu hỏi:
 
 | Bước | Câu hỏi | Cách làm |
 |---|---|---|
