@@ -185,19 +185,19 @@ start
 :Tiền xử lý
 chọn anten[0] · z-score theo (rx, sub)
 (B, N_rx, N_sub, T);
-#E3F2FD:Khối 1 — Trích đặc trưng cục bộ
+:Khối 1 — Trích đặc trưng cục bộ
 sliding window W = 64, S = 32 → 30 window (chồng 50%)
 nhánh Conv1d ‖ nhánh FFT → fuse
-(B, N_rx, 30, N_sub, D);
-#FFF3E0:Khối 2 — Joint (Rx × Sub) attention
+(B, N_rx, 30, N_sub, D); <<#E3F2FD>>
+:Khối 2 — Joint (Rx × Sub) attention
 mỗi window: 168 token + CLS, PE_sub, 2 lớp
-(B, 30, D);
-#E8F5E9:Khối 3 — Temporal Transformer
+(B, 30, D); <<#FFF3E0>>
+:Khối 3 — Temporal Transformer
 30 window token + CLS, ALiBi, 6 lớp
-(B, D);
-#F3E5F5:Classifier
+(B, D); <<#E8F5E9>>
+:Classifier
 LayerNorm · Dropout · Linear
-(B, n_class);
+(B, n_class); <<#F3E5F5>>
 stop
 @enduml
 ```
@@ -299,9 +299,9 @@ H = 4, d_head = 16, FFN = 256
 ALiBi cộng vào attention score (xem Hình 5);
 :Lấy output của CLS
 (B, D);
-#F3E5F5:Classifier
+:Classifier
 LayerNorm(D) → Dropout(0.1) → Linear(D → n_class)
-(B, n_class);
+(B, n_class); <<#F3E5F5>>
 stop
 @enduml
 ```
@@ -589,36 +589,7 @@ CSI-WiFormer N_sub=30  452K        2.51G   (đo từ code)
 
 ---
 
-## 8. So sánh với các phương pháp liên quan
-
-### 8.1 Transformer-based (baseline chính)
-
-| Tiêu chí | THAT (AAAI'21) | WiFlexFormer (2024) | AMCS-TCN | **CSI-WiFormer** |
-|---|---|---|---|---|
-| Input | Raw CSI | Raw / DFS | Raw CSI | **Raw CSI** |
-| Tokenization | 2 stream song song | Stem + 1D seq | Multi-scale conv | **Sliding win overlap 50%** |
-| Đặc trưng cục bộ | Conv | Conv stem | Multi-scale conv | **Conv1d (giữ thứ tự) ‖ FFT** |
-| Sub selection | Gaussian PE | Không | Scale selection | **Joint per window** |
-| Cross Rx × Sub | Không | Không | Không (fuse sớm) | **Trực tiếp** |
-| Sliding overlap | Không | Không | Không | **Có** |
-| Multi-Rx | Không | Không | Fuse global | **Joint, N_rx linh hoạt** |
-| Positional encoding | Gaussian range | Standard APE | — | **ALiBi (relative)** |
-| Params | ~2M | ~100K | ~2M+ | **~453K** |
-| Code công khai | Không | Có | Không | — |
-
-### 8.2 Multi-view attention (tham khảo)
-
-| Tiêu chí | UniFi (IMWUT'24) | **CSI-WiFormer** |
-|---|---|---|
-| Task | Nhận dạng cử chỉ | HAR thô |
-| Input | Spectrogram (ảnh RGB) | Raw CSI |
-| Cross Rx × Sub | Per timestep t độc lập | **Joint đồng thời** |
-| Cần vị trí Rx | Có (Fresnel zone mask) | **Không** |
-| Mục tiêu | Cross-domain generalization | Classification |
-
----
-
-## 9. Điểm thiết kế nổi bật
+## 8. Điểm thiết kế nổi bật
 
 **Sliding window overlap 50%** (Khối 1): đảm bảo micro-pattern không bị cắt đứt giữa 2 window; tạo continuity trong chuỗi token. Được kiểm chứng bằng ablation không cắt cửa sổ (`b_nowin`) và cửa sổ không chồng (`b_nooverlap`).
 
