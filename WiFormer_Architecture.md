@@ -174,60 +174,59 @@ Input raw      (B, N_rx, N_ant, N_sub, T)    nếu dataset có nhiều anten
 classDiagram
     direction TB
     class BaseModel {
-        <<abstract>>
         +input_shape
         +num_classes
         +forward(x)
     }
     class WiFormer {
-        +n_rx : int
-        +n_ant : int
-        +n_sub : int
-        +n_win : int
-        +sample_norm : bool
-        +ant_mode : str
-        +block1 : SubFeatureExtractor
-        +block2 : JointRxSubAttention
-        +block3 : TemporalTransformer
-        +classifier : Sequential
+        +int n_rx
+        +int n_ant
+        +int n_sub
+        +int n_win
+        +bool sample_norm
+        +str ant_mode
+        +SubFeatureExtractor block1
+        +JointRxSubAttention block2
+        +TemporalTransformer block3
+        +Sequential classifier
         +preprocess(x) Tensor
         +forward(x) Tensor
-        -_init_weights()
+        -init_weights()
     }
     class SubFeatureExtractor {
-        +window : int = 64
-        +stride : int = 32
-        +encoder : Conv1d x3 + BN + GELU + AvgPool(4)
-        +proj_time : Linear(256, D)
-        +proj_freq : Linear(W/2, D)
-        +fuse : Linear(2D, D)
+        +int window = 64
+        +int stride = 32
+        +Sequential encoder : 3x Conv1d-BN-GELU, AvgPool 4
+        +Linear proj_time : 256 to D
+        +Linear proj_freq : W/2 to D
+        +Linear fuse : 2D to D
         +forward(x) Tensor
     }
     class JointRxSubAttention {
-        +mode : str = "joint"
-        +pe : str = "sub"
-        +embed_sub : Embedding(N_sub, D/2)
-        +pe_proj : Linear(D/2, D)
-        +cls_token : Parameter(1, 1, D)
-        +attn_layer : TransformerEncoder(L=2)
-        -_pos(R, S) Tensor
+        +str mode = joint
+        +str pe = sub
+        +Embedding embed_sub : N_sub x D/2
+        +Linear pe_proj : D/2 to D
+        +Parameter cls_token : 1x1xD
+        +TransformerEncoder attn_layer : 2 layers
+        -pos(R, S) Tensor
         +forward(x) Tensor
     }
     class TemporalTransformer {
-        +pos : str = "alibi"
-        +n_layers : int = 6
-        +cls_token : Parameter(1, 1, D)
-        +encoder : TransformerEncoder(L=6)
-        +alibi_slopes : buffer(H)
+        +str pos = alibi
+        +int n_layers = 6
+        +Parameter cls_token : 1x1xD
+        +TransformerEncoder encoder : 6 layers
+        +Tensor alibi_slopes : H
         +build_alibi_bias(L) Tensor
         +forward(x) Tensor
     }
     class SafeTransformerEncoderLayer {
         +forward(src, src_mask) Tensor
-        -_safe_sa(x, attn_mask) Tensor
+        -safe_sa(x, attn_mask) Tensor
     }
     class TransformerEncoderLayer {
-        <<PyTorch>>
+        PyTorch nn
     }
     BaseModel <|-- WiFormer
     TransformerEncoderLayer <|-- SafeTransformerEncoderLayer
