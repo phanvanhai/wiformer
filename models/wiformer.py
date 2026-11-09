@@ -1,5 +1,5 @@
 """
-CSI-WiFormer (v5) - see WiFormer_Architecture.md
+CSI-WiFormer (v5, option B defaults) - see WiFormer_Architecture_Implemented.md
 
 Input (from datasets.py)
 ------------------------
@@ -12,6 +12,7 @@ Pipeline
 select antenna[0]  -> (B, N_rx, N_sub, T)
 per-sample z-score -> (B, N_rx, N_sub, T)
 Block 1 : unfold(W, S) + [Conv1d branch || FFT branch] -> fuse -> (B, N_rx, n_win, N_sub, D)
+          (window <= 0: no windowing, one window over the whole sequence)
 Block 2 : joint (Rx x Sub) attention per window, PE_sub only, CLS -> (B, n_win, D)
 Block 3 : CLS + ALiBi temporal Transformer -> (B, D)
 Classifier : LayerNorm -> Dropout -> Linear -> logits
@@ -113,14 +114,14 @@ class SubFeatureExtractor(nn.Module):
 
     Capacity knobs (temporal branch)
     --------------------------------
-    n_conv : 2 (default), 3 or 4 -- extra Conv1d(feat, feat, 3) layers keep length W/4
-    pool   : "avg"  -> global average over the W/4 steps (default, order-free)
-             "flatN" (e.g. "flat4") -> average to N steps, then flatten, so the
-             order inside the window survives (rising vs falling motion)
+    n_conv : 2, 3 (default) or 4 -- extra Conv1d(feat, feat, 3) layers keep length W/4
+    pool   : "avg"  -> global average over the W/4 steps (order-free)
+             "flatN" (e.g. "flat4", default) -> average to N steps, then flatten, so
+             the order inside the window survives (rising vs falling motion)
     """
 
     def __init__(self, d_model=64, feat=64, window=64, stride=32,
-                 use_time=True, use_freq=True, n_conv=2, pool="avg"):
+                 use_time=True, use_freq=True, n_conv=3, pool="flat4"):
         super().__init__()
         self.window = window
         self.stride = stride
