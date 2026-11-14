@@ -26,10 +26,11 @@ from torch.utils.data import DataLoader
 
 
 # Default split mode when none is passed: "repeat" (by repetition index),
+# "repeat622" (SSHAR only, by repetition index, 6:2:2 - used by WiFormer v3),
 # "user" (cross-user, train users given by USER_CASES[...][case_split]) or
 # "position" (SSHAR only, cross-position: test = positions with
 # pos % N_POSITION_CASES == case_split, i.e. 2 of the 8 positions per case).
-SPLIT_MODES = ("repeat", "user", "position")
+SPLIT_MODES = ("repeat", "repeat622", "user", "position")
 N_POSITION_CASES = 4
 DEFAULT_SPLIT_MODE = "repeat"
 
@@ -55,6 +56,16 @@ def sshar_repeat_split_of(pos, direction, rep):
         return "test"
     val_dir = 1 if pos % 2 else 2           # odd pos -> dir01, even pos -> dir02
     return "val" if rep == 4 and direction == val_dir else "train"
+
+
+def sshar_repeat622_split_of(pos, direction, rep):
+    """By repetition, 6:2:2. Per (subject, action) 80 recordings -> 48 / 16 / 16.
+    dir00 (10 reps)        : rep 1-6 train, rep 7-8 val, rep 9-10 test
+    dir01 / dir02 (5 reps) : rep 1-3 train, rep 4 val, rep 5 test (both directions)
+    Test is identical to the 7:1:2 protocol (3B)."""
+    if direction == 0:
+        return "test" if rep > 8 else "val" if rep > 6 else "train"
+    return "test" if rep == 5 else "val" if rep == 4 else "train"
 
 
 def sshar_user_split_of(subject_id, user_case=0):
@@ -537,6 +548,9 @@ class _SSHARDatasetBase(Dataset):
                     if self.split_mode == "repeat":
                         # Protocol 3B: theo lan lap, 7:1:2
                         fixed = sshar_repeat_split_of(pos, direction, rep)
+                    elif self.split_mode == "repeat622":
+                        # Theo lan lap, 6:2:2
+                        fixed = sshar_repeat622_split_of(pos, direction, rep)
                     elif self.split_mode == "position":
                         # Chia theo vi tri: giu lai 2/8 vi tri lam test, val = 1/8 phan con lai
                         held_out = pos % N_POSITION_CASES == self.case_split
@@ -1066,6 +1080,7 @@ def load_dataset(
 
     Split:
       SSHAR repeat    -> protocol 3B, 7:1:2 by repetition (4480 / 640 / 1280)
+      SSHAR repeat622 -> 6:2:2 by repetition (3840 / 1280 / 1280), same test as repeat
       SSHAR user      -> protocol 3A, 7 / 1 / 2 subjects (case 0..4)
       SSHAR position  -> test = held-out positions, rest train:val = 7:1
       XRF55 repeat    -> 7:1:1 stratified by class (fixed seed)
@@ -1088,7 +1103,14 @@ def load_dataset(
     split_mode = _check_split_mode(kwargs.get("split_mode", DEFAULT_SPLIT_MODE))
     ratio = ":".join(map(str, SPLIT_RATIO))
     sshar = name.lower().startswith("sshar")
-    if split_mode == "user" and sshar:
+    if split_mode == "repeat622" and name.lower() == "xrf55":
+        raise ValueError("split_mode='repeat622' is only available for SSHAR")
+    if name.lower() == "ut_har":
+        print("Split = UT_HAR's own X_train / X_val / X_test (split_mode ignored)")
+    elif split_mode == "repeat622" and sshar:
+        print("Split mode = repeat622 (6:2:2 by repetition: dir00 rep1-6/7-8/9-10; "
+              "dir01/02 rep1-3/4/5 of both directions)")
+    elif split_mode == "user" and sshar:
         users = USER_CASES["sshar"][case_split]
         val_u = SSHAR_VAL_SUBJECTS[case_split]
         test_u = sorted(set(SSHAR_ALL_SUBJECTS) - set(users))

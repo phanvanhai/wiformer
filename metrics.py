@@ -475,6 +475,99 @@ def plot_confusion_matrix(
 
 
 # ============================================================
+# Per-split report (train / val / test) with the best checkpoint
+# ============================================================
+# Class names used in reports / figures (index = label after remapping)
+CLASS_NAMES = {
+    "sshar_esp": ["sit_down", "stand_up", "pick_up", "fall", "lie_still", "walk", "run", "empty"],
+}
+
+
+def _plot_cm(cm, cm_pct, class_names, title, path):
+    """Heatmap coloured by row %, each cell annotated 'count\\n(xx.x%)'."""
+    annot = np.array([[f"{c}\n({p:.1f}%)" for c, p in zip(rc, rp)] for rc, rp in zip(cm, cm_pct)])
+    size = max(6, 0.9 * len(cm) + 2)
+    plt.figure(figsize=(size + 1, size))
+    sns.heatmap(cm_pct, annot=annot, fmt="", cmap="Blues", vmin=0, vmax=100,
+                xticklabels=class_names, yticklabels=class_names,
+                cbar_kws={"label": "% of true class (row)"}, annot_kws={"fontsize": 8})
+    plt.xlabel("Predicted")
+    plt.ylabel("True")
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(path, dpi=200)
+    plt.close()
+
+
+@torch.no_grad()
+def save_split_reports(model, loaders, device, save_dir, dataset=None, num_classes=None):
+    """
+    Evaluate `model` (already loaded with the best checkpoint) on every split
+    and save, for each split in `loaders` (e.g. {"train": ..., "val": ..., "test": ...}):
+
+        <save_dir>/<split>/metrics.json                 accuracy, precision / recall / F1 (macro + weighted), n
+        <save_dir>/<split>/classification_report.csv    per-class precision / recall / F1 / support
+        <save_dir>/<split>/confusion_matrix_count.csv   number of samples (row = true, col = predicted)
+        <save_dir>/<split>/confusion_matrix_rowpct.csv  % of each true class (rows sum to 100)
+        <save_dir>/<split>/confusion_matrix.png         counts + row %
+        <save_dir>/<split>/predictions.csv              true / pred / per-class probabilities
+    and <save_dir>/summary_splits.csv with one row per split.
+    """
+    names = CLASS_NAMES.get((dataset or "").lower())
+    was_training = model.training
+    model.eval()
+    rows = []
+    for split, loader in loaders.items():
+        y_true, y_pred, probs = [], [], []
+        for x, y in loader:
+            logits = model(x.to(device))
+            probs.append(torch.softmax(logits.float(), dim=1).cpu())
+            y_pred.append(logits.argmax(dim=1).cpu())
+            y_true.append(y.cpu())
+        y_true = torch.cat(y_true).numpy()
+        y_pred = torch.cat(y_pred).numpy()
+        probs = torch.cat(probs).numpy()
+        n_cls = num_classes or probs.shape[1]
+        labels = list(range(n_cls))
+        cls_names = names if names and len(names) == n_cls else [str(i) for i in labels]
+
+        metrics, _, _ = compute_metrics(y_true, y_pred)
+        cm = confusion_matrix(y_true, y_pred, labels=labels)
+        row_sum = cm.sum(axis=1, keepdims=True)
+        cm_pct = np.divide(100.0 * cm, row_sum, out=np.zeros(cm.shape), where=row_sum > 0)
+        report = classification_report(y_true, y_pred, labels=labels, target_names=cls_names,
+                                       output_dict=True, zero_division=0)
+
+        out = os.path.join(save_dir, split)
+        os.makedirs(out, exist_ok=True)
+        m = {k: float(v) for k, v in metrics.items()}
+        m["n"] = int(len(y_true))
+        with open(os.path.join(out, "metrics.json"), "w", encoding="utf-8") as f:
+            json.dump(m, f, indent=4)
+        pd.DataFrame(report).transpose().to_csv(os.path.join(out, "classification_report.csv"))
+        pd.DataFrame(cm, index=cls_names, columns=cls_names).to_csv(
+            os.path.join(out, "confusion_matrix_count.csv"))
+        pd.DataFrame(cm_pct.round(2), index=cls_names, columns=cls_names).to_csv(
+            os.path.join(out, "confusion_matrix_rowpct.csv"))
+        _plot_cm(cm, cm_pct, cls_names,
+                 f"{split} - acc {100 * m['accuracy']:.2f}%  F1 {100 * m['f1_macro']:.2f}%",
+                 os.path.join(out, "confusion_matrix.png"))
+        pred_df = pd.DataFrame({"true": y_true, "pred": y_pred})
+        for i, c in enumerate(cls_names):
+            pred_df[f"p_{c}"] = probs[:, i].round(5)
+        pred_df.to_csv(os.path.join(out, "predictions.csv"), index_label="sample")
+
+        rows.append({"split": split, **m})
+        print(f"[{split:5s}] n={m['n']:5d}  acc={100 * m['accuracy']:.2f}  "
+              f"F1={100 * m['f1_macro']:.2f}  P={100 * m['precision_macro']:.2f}  "
+              f"R={100 * m['recall_macro']:.2f}")
+
+    pd.DataFrame(rows).to_csv(os.path.join(save_dir, "summary_splits.csv"), index=False)
+    model.train(was_training)
+    return rows
+
+
+# ============================================================
 # Complete Evaluation
 # ============================================================
 

@@ -21,6 +21,7 @@ from metrics import (
     evaluate_model,
     measure_model_complexity,
     save_model_complexity,
+    save_split_reports,
 )
 
 # ============================================================
@@ -86,6 +87,7 @@ def parse_args():
             "resnet1d",
             "cnn_gru",
             "wiformer",
+            "wiformer_v3",
         ],
         help="Model name",
     )
@@ -325,14 +327,37 @@ def parse_args():
     parser.add_argument("--dropout", type=float, default=0.1, help="WiFormer: dropout")
     parser.add_argument("--sub_group", type=int, default=1,
                         help="WiFormer: average every N adjacent subcarriers before Block 1 (56 -> 56/N tokens)")
-    parser.add_argument("--window", type=int, default=64,
-                        help="WiFormer window W (0 = no windowing: one window over the whole sequence)")
-    parser.add_argument("--stride", type=int, default=32, help="WiFormer stride")
+    parser.add_argument("--window", type=int, default=None,
+                        help="WiFormer window W in samples (wiformer default 64, 0 = one window over the "
+                             "whole sequence; wiformer_v3 default: from --window_sec and --fs)")
+    parser.add_argument("--stride", type=int, default=None,
+                        help="WiFormer stride (wiformer default 32, wiformer_v3 default W // 2)")
+    # ---- WiFormer v3 ----
+    parser.add_argument("--v3_ablation", type=str, default="full",
+                        choices=["full", "wo_freq", "wo_main", "wo_block1", "wo_block2", "wo_block3"],
+                        help="WiFormer v3 core ablation (remove one block / branch)")
+    parser.add_argument("--window_sec", type=float, default=0.3,
+                        help="WiFormer v3: window length in seconds (W = floor(window_sec * fs), even)")
+    parser.add_argument("--fs", type=float, default=None,
+                        help="WiFormer v3: sampling rate in Hz (default per dataset: sshar_esp = 200)")
+    parser.add_argument("--mdrop", type=float, default=0.3,
+                        help="WiFormer v3: modality dropout probability on the speed branch")
+    parser.add_argument("--aux_w", type=float, default=0.3,
+                        help="WiFormer v3: weight of the auxiliary CE on the main branch (0 = off)")
+    parser.add_argument("--gate_bias", type=float, default=-2.0,
+                        help="WiFormer v3: initial gate bias b_g (sigmoid(-2) ~ 0.12)")
     parser.add_argument(
         "--run_name",
         type=str,
         default="",
         help="Suffix of the result folder: <dataset>_<model>[_<run_name>]",
+    )
+    parser.add_argument(
+        "--run_dir",
+        type=str,
+        default="",
+        help="Full name of the result folder under --result_root (overrides the "
+             "<dataset>_<model>[_<run_name>] naming)",
     )
 
     parser.add_argument(
@@ -347,8 +372,9 @@ def parse_args():
             "--split_mode",
             type=str,
             default="repeat",
-            choices=["repeat", "user", "position"],
-            help="split: 'repeat' (SSHAR: protocol 7:1:2 by repetition; XRF55: random 7:1:1), 'user' (cross-user, uses --case_split) "
+            choices=["repeat", "repeat622", "user", "position"],
+            help="split: 'repeat' (SSHAR: protocol 7:1:2 by repetition; XRF55: random 7:1:1), "
+                 "'repeat622' (SSHAR: 6:2:2 by repetition), 'user' (cross-user, uses --case_split) "
                  "or 'position' (SSHAR cross-position, --case_split 0..3 holds out pos %% 4 == case)"
         )
 
@@ -358,7 +384,7 @@ def parse_args():
 def get_default_train_cfg(model_name):
     """Per-model defaults for lr / batch size / optimizer."""
     model_name = model_name.lower()
-    if model_name == "wiformer":
+    if model_name in ("wiformer", "wiformer_v3"):
         # Adam, lr=1e-3 (as in common WiFi-HAR baselines). Warmup + cosine
         # are kept for the Transformer so the large initial lr stays stable.
         return {
@@ -379,7 +405,7 @@ def get_default_train_cfg(model_name):
 
 def get_default_scheduler_cfg(model_name, epochs=100, warmup_epochs=0):
     model_name = model_name.lower()
-    if model_name == "wiformer":
+    if model_name in ("wiformer", "wiformer_v3"):
         return {
             "name": "cosineannealinglr",
             "args": {
@@ -487,8 +513,8 @@ def main():
             k3_pos=args.k3_pos,
             ant_mode=args.ant_mode,
             sample_norm=not args.no_sample_norm,
-            window=args.window,
-            stride=args.stride,
+            window=64 if args.window is None else args.window,
+            stride=32 if args.stride is None else args.stride,
             d_model=args.d_model,
             feat=args.feat,
             k1_conv=args.k1_conv,
@@ -499,6 +525,28 @@ def main():
             k3_ff=args.k3_ff,
             dropout=args.dropout,
             sub_group=args.sub_group,
+        )
+    elif args.model == "wiformer_v3":
+        model_kwargs.update(
+            ablation=args.v3_ablation,
+            window_sec=args.window_sec,
+            fs=args.fs,
+            window=args.window,
+            stride=args.stride,
+            d_model=args.d_model,
+            feat=args.feat,
+            k1_conv=args.k1_conv,
+            k1_pool=args.k1_pool,
+            k2_layers=args.k2_layers,
+            k2_heads=args.k2_heads,
+            k2_ff=args.k2_ff,
+            k3_layers=args.k3_layers,
+            k3_heads=args.k3_heads,
+            k3_ff=args.k3_ff,
+            dropout=args.dropout,
+            mdrop=args.mdrop,
+            aux_w=args.aux_w,
+            gate_bias=args.gate_bias,
         )
 
     model = get_model(
@@ -553,6 +601,8 @@ def main():
     run_dir = f"{args.dataset}_{args.model}"
     if args.run_name:
         run_dir += f"_{args.run_name}"
+    if args.run_dir:
+        run_dir = args.run_dir
     save_dir = os.path.join(
         args.result_root,
         run_dir,
@@ -648,6 +698,22 @@ def main():
         best_val_acc=best_acc,
         epochs_trained=len(history),
     )
+
+    # Full report of the best checkpoint on train / val / test:
+    # metrics, per-class report, confusion matrix (counts + row %), predictions
+    save_split_reports(
+        model=model,
+        loaders={"train": train_loader, "val": val_loader, "test": test_loader},
+        device=device,
+        save_dir=save_dir,
+        dataset=args.dataset,
+        num_classes=num_classes,
+    )
+
+    # Model-specific analysis on the test set (WiFormer v3: gate per class,
+    # learned bias tables, RX-permutation check)
+    if hasattr(model, "analyze"):
+        model.analyze(test_loader, device, save_dir)
 
     print()
     print("=" * 60)

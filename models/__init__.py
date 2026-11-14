@@ -8,6 +8,7 @@ from .bilstm import BiLSTM
 from .vit import ViT
 from .cnn_gru import CNN_GRU
 from .wiformer import WiFormer
+from .wiformer_v3 import WiFormerV3
 
 SUPPORTED_MODELS = [
     "mlp",
@@ -18,6 +19,7 @@ SUPPORTED_MODELS = [
     "resnet1d",
     "cnn_gru",
     "wiformer",
+    "wiformer_v3",
 ]
 
 
@@ -76,6 +78,13 @@ def get_model(model_name, input_shape, num_classes, **kwargs):
 
     if model_name == "wiformer":
         return WiFormer(
+            input_shape=input_shape,
+            num_classes=num_classes,
+            **kwargs,
+        )
+
+    if model_name == "wiformer_v3":
+        return WiFormerV3(
             input_shape=input_shape,
             num_classes=num_classes,
             **kwargs,

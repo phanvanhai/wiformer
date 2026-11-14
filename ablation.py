@@ -23,6 +23,12 @@ python ablation.py --data_root=".\\data\\" --dataset=sshar_esp ^
 
 # only rebuild the summary table from finished runs
 python ablation.py --dataset=xrf55 --summary_only
+
+# WiFormer v3 core ablation (SSHAR split defaults to repeat622 = 6:2:2 by repetition)
+# result folders: <result_root>/<dataset>_<split>_<variant>, e.g. sshar_esp_repeat622_full,
+#                 ut_har_official_wo_freq, sshar_esp_user_c0_full
+python ablation.py --model=wiformer_v3 --data_root=".\\data\\" --dataset=sshar_esp
+python ablation.py --model=wiformer_v3 --data_root=".\\data\\" --dataset=ut_har
 """
 
 import argparse
@@ -120,6 +126,25 @@ SETS = {
     "all": list(VARIANTS),
 }
 
+# ---- WiFormer v3 (--model=wiformer_v3): core ablation, remove one block / branch ----
+# see WiFormer_v3_Architecture.md, section 15.1
+V3_VARIANTS = {
+    "full": ("Full", "WiFormer v3 (all blocks / branches)", ["--v3_ablation=full"]),
+    "wo_freq": ("Aux", "w/o speed branch (x_k = h_k)", ["--v3_ablation=wo_freq"]),
+    "wo_main": ("Main", "w/o main branch: Block 1 + 2 (x_k = P(f_k))", ["--v3_ablation=wo_main"]),
+    "wo_block1": ("Block 1", "w/o Block 1 (Linear(W,D) on raw window)", ["--v3_ablation=wo_block1"]),
+    "wo_block2": ("Block 2", "w/o Block 2 (mean over Rx x Sub)", ["--v3_ablation=wo_block2"]),
+    "wo_block3": ("Block 3", "w/o Block 3 (mean over windows)", ["--v3_ablation=wo_block3"]),
+}
+V3_SETS = {"core": list(V3_VARIANTS), "all": list(V3_VARIANTS)}
+
+
+def tables(model):
+    """(variants, sets) of the given model."""
+    if model == "wiformer_v3":
+        return V3_VARIANTS, V3_SETS
+    return VARIANTS, SETS
+
 METRIC_KEYS = [
     "accuracy", "f1_macro", "precision_macro", "recall_macro",
     "best_epoch", "epochs_trained", "total_params", "flops_per_sample", "training_time",
@@ -131,7 +156,9 @@ def parse_args():
     p.add_argument("--dataset", type=str, default=None,
                    choices=["ut_har", "xrf55", "sshar_esp", "sshar_asus"])
     p.add_argument("--data_root", type=str, default=None)
-    p.add_argument("--result_root", type=str, default="results/ablation")
+    p.add_argument("--model", type=str, default="wiformer", choices=["wiformer", "wiformer_v3"])
+    p.add_argument("--result_root", type=str, default=None,
+                   help="default: results/ablation (wiformer), results/ablation_v3 (wiformer_v3)")
     p.add_argument("--set", type=str, default="core", choices=list(SETS),
                    help="core = remove one block at a time (default), "
                         "design = design choices inside blocks, "
@@ -143,13 +170,33 @@ def parse_args():
                    help="Skip variants whose metrics.json already has accuracy")
     p.add_argument("--summary_only", action="store_true")
     p.add_argument("--list", action="store_true")
+    p.add_argument("--split_mode", type=str, default=None,
+                   choices=["repeat", "repeat622", "user", "position"],
+                   help="default: repeat622 (wiformer_v3), repeat (wiformer); ignored for ut_har")
+    p.add_argument("--case_split", type=int, default=0, help="case for --split_mode user / position")
     p.add_argument("--extra", nargs=argparse.REMAINDER, default=[],
                    help="Everything after --extra is passed to main.py (e.g. --epochs=50)")
     return p.parse_args()
 
 
-def run_dir(result_root, dataset, name):
-    return os.path.join(result_root, f"{dataset}_wiformer_{name}")
+def split_label(args):
+    """Split part of the folder / summary names."""
+    if args.dataset == "ut_har":
+        return "official"                       # UT_HAR's own train / val / test files
+    if args.split_mode in ("user", "position"):
+        return f"{args.split_mode}_c{args.case_split}"
+    return args.split_mode
+
+
+def folder_name(args, name):
+    """wiformer_v3: <dataset>_<split>_<variant>; wiformer (v2): <dataset>_wiformer_<variant> (unchanged)."""
+    if args.model == "wiformer_v3":
+        return f"{args.dataset}_{split_label(args)}_{name}"
+    return f"{args.dataset}_{args.model}_{name}"
+
+
+def run_dir(args, name):
+    return os.path.join(args.result_root, folder_name(args, name))
 
 
 def is_done(path):
@@ -161,39 +208,53 @@ def is_done(path):
 
 
 def run_variant(args, name):
+    variants, _ = tables(args.model)
     cmd = [
         sys.executable, "main.py",
         f"--data_root={args.data_root}",
         f"--dataset={args.dataset}",
-        "--model=wiformer",
+        f"--model={args.model}",
         f"--result_root={args.result_root}",
-        f"--run_name={name}",
-        *VARIANTS[name][2],
-        *args.extra,
+        f"--run_dir={folder_name(args, name)}",
+        f"--split_mode={args.split_mode}",
+        f"--case_split={args.case_split}",
+        *variants[name][2],
+        *args.extra,          # last -> overrides the defaults above
     ]
     print("\n" + "#" * 70)
-    print(f"# [{name}] {VARIANTS[name][1]}")
+    print(f"# [{name}] {variants[name][1]}")
     print("# " + " ".join(cmd))
     print("#" * 70, flush=True)
     return subprocess.run(cmd).returncode
 
 
-def summarize(result_root, dataset, names, tag):
+def summarize(args, names, tag):
+    variants, _ = tables(args.model)
+    result_root, dataset, model = args.result_root, args.dataset, args.model
     rows = []
     # delta_acc is measured against "full" if it is in the list, else the first name
     ref = "full" if "full" in names else names[0]
     full_acc = None
     for name in names:
-        f = os.path.join(run_dir(result_root, dataset, name), "metrics.json")
+        d = run_dir(args, name)
+        f = os.path.join(d, "metrics.json")
         if not os.path.isfile(f):
             continue
         with open(f, encoding="utf-8") as fh:
             m = json.load(fh)
         if "accuracy" not in m:
             continue
-        group, desc, _ = VARIANTS[name]
-        row = {"variant": name, "group": group, "description": desc}
+        group, desc, _ = variants[name]
+        row = {"variant": name, "group": group, "description": desc, "folder": os.path.basename(d)}
         row.update({k: m.get(k) for k in METRIC_KEYS})
+        # train / val accuracy of the best checkpoint (summary_splits.csv, newer runs only)
+        s = os.path.join(d, "summary_splits.csv")
+        if os.path.isfile(s):
+            with open(s, encoding="utf-8") as fh:
+                for r in csv.DictReader(fh):
+                    if r["split"] in ("train", "val"):
+                        row[f"{r['split']}_acc"] = float(r["accuracy"])
+                        row[f"{r['split']}_f1"] = float(r["f1_macro"])
         rows.append(row)
         if name == ref:
             full_acc = m["accuracy"]
@@ -205,11 +266,15 @@ def summarize(result_root, dataset, names, tag):
     for r in rows:
         r["delta_acc"] = None if full_acc is None else r["accuracy"] - full_acc
 
-    out = os.path.join(result_root, f"ablation_{dataset}_{tag}.csv")
+    if model == "wiformer":
+        out = os.path.join(result_root, f"ablation_{dataset}_{tag}.csv")
+    else:
+        out = os.path.join(result_root, f"ablation_{model}_{dataset}_{split_label(args)}_{tag}.csv")
     os.makedirs(result_root, exist_ok=True)
-    fields = ["variant", "group", "description", *METRIC_KEYS, "delta_acc"]
+    fields = ["variant", "group", "description", "folder", *METRIC_KEYS,
+              "train_acc", "train_f1", "val_acc", "val_f1", "delta_acc"]
     with open(out, "w", newline="", encoding="utf-8") as fh:
-        w = csv.DictWriter(fh, fieldnames=fields)
+        w = csv.DictWriter(fh, fieldnames=fields, restval="")
         w.writeheader()
         w.writerows(rows)
 
@@ -226,12 +291,19 @@ def summarize(result_root, dataset, names, tag):
 
 def main():
     args = parse_args()
+    if args.result_root is None:
+        args.result_root = "results/ablation_v3" if args.model == "wiformer_v3" else "results/ablation"
+    if args.split_mode is None:
+        args.split_mode = "repeat622" if args.model == "wiformer_v3" else "repeat"
+    variants, sets = tables(args.model)
 
     if args.list:
-        for title, table in (("core (remove one block at a time)", CORE_VARIANTS),
-                             ("design (choices inside blocks)", DESIGN_VARIANTS),
-                             ("scale (bigger blocks)", SCALE_VARIANTS),
-                             ("window (windowing, reference full)", WINDOW_VARIANTS)):
+        groups = ((("v3 core (remove one block / branch)", V3_VARIANTS),) if args.model == "wiformer_v3" else
+                  (("core (remove one block at a time)", CORE_VARIANTS),
+                   ("design (choices inside blocks)", DESIGN_VARIANTS),
+                   ("scale (bigger blocks)", SCALE_VARIANTS),
+                   ("window (windowing, reference full)", WINDOW_VARIANTS)))
+        for title, table in groups:
             print(f"[{title}]")
             for name, (group, desc, cli) in table.items():
                 print(f"  {name:<14}{group:<9}{desc:<48}{' '.join(cli)}")
@@ -240,9 +312,11 @@ def main():
     if args.dataset is None:
         sys.exit("--dataset is required")
 
-    names = args.variants or SETS[args.set]
+    if args.set not in sets:
+        sys.exit(f"--set {args.set} is not available for {args.model}: {list(sets)}")
+    names = args.variants or sets[args.set]
     tag = "custom" if args.variants else args.set
-    unknown = [n for n in names if n not in VARIANTS]
+    unknown = [n for n in names if n not in variants]
     if unknown:
         sys.exit(f"Unknown variants: {unknown}. Use --list.")
 
@@ -251,7 +325,7 @@ def main():
             sys.exit("--data_root is required")
         failed = []
         for name in names:
-            if args.skip_done and is_done(run_dir(args.result_root, args.dataset, name)):
+            if args.skip_done and is_done(run_dir(args, name)):
                 print(f"[skip] {name} already done")
                 continue
             if run_variant(args, name) != 0:
@@ -259,7 +333,7 @@ def main():
         if failed:
             print(f"\nFailed variants: {failed}")
 
-    summarize(args.result_root, args.dataset, names, tag)
+    summarize(args, names, tag)
 
 
 if __name__ == "__main__":

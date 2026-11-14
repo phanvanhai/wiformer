@@ -142,6 +142,11 @@ def train_one_epoch(
 
         output = model(x)
         loss = criterion(output, y)
+        # optional model-specific auxiliary loss (e.g. WiFormer v3 aux head)
+        extra_loss = getattr(model, "extra_loss", None)
+        extra = extra_loss(y) if callable(extra_loss) else None
+        if extra is not None:
+            loss = loss + extra
         (loss / accum_steps).backward()
         if i % accum_steps == 0 or i == n_batches:
             optimizer.step()

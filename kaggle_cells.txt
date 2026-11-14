@@ -1,0 +1,99 @@
+############################################################################
+# KAGGLE - WiFormer ablation: 2 ô code
+#   CELL 1: cấu hình + lấy code   (chỉ cần sửa phần cấu hình)
+#   CELL 2: chạy ablation + tổng hợp + đóng gói Output
+#
+# Settings: GPU T4 x2 (hoặc P100), Internet On. Add Input: dataset SSHAR-ESP hoặc UT_HAR.
+# Save Version -> Save & Run All (Commit). Kết quả: tab Output, results_<RUN_TAG>.zip
+#
+# Split: sshar v3 = 'repeat622' (6:2:2 theo lần lặp); v2 = 'repeat' | 'user' | 'position';
+#        ut_har luôn dùng split có sẵn (X_train / X_val / X_test).
+# 1 run ~2-3 h trên SSHAR-ESP -> ~3-4 biến thể / phiên 12 h.
+# Chạy tiếp phiên sau: thêm Output phiên trước làm Input, đặt PREV_RESULTS
+# (run đã xong sẽ được bỏ qua).
+#
+# Output (mỗi run một thư mục <dataset>_<split>_<variant>, vd sshar_esp_repeat622_full,
+#         ut_har_official_wo_freq, sshar_esp_user_c0_full):
+#   config.json, metrics.json (test), history.csv, learning_curve.png, best_model.pth
+#   summary_splits.csv                      acc / P / R / F1 của train, val, test
+#   train/ val/ test/                       với mỗi tập:
+#       metrics.json, classification_report.csv (theo lớp),
+#       confusion_matrix_count.csv (số mẫu), confusion_matrix_rowpct.csv (% theo hàng),
+#       confusion_matrix.png (số mẫu + %), predictions.csv (true / pred / xác suất)
+#   v3: gate_by_class.csv, block2_bias.json, block3_bias.json, rx_permutation.json
+# Bảng tổng hợp: ablation_<model>_<dataset>_<split>_custom.csv
+############################################################################
+
+
+# ============================== CELL 1 ==============================
+# ---- đường dẫn dataset (thư mục Input trên Kaggle) ----
+# SSHAR-ESP room 2: thư mục chứa room_02/ (bên trong room_02/esp/rx_00/...)
+# UT_HAR          : thư mục chứa data/X_train.csv và label/y_train.csv (hoặc thư mục cha)
+DATA_PATHS = {
+    'sshar_esp': '/kaggle/input/datasets/phanvanhai/csi-room-02-0707',
+    'ut_har':    '/kaggle/input/ut-har',          # sửa theo tên dataset UT_HAR đã Add Input
+}
+
+REPO_URL   = 'https://github.com/phanvanhai/wiformer.git'
+BRANCH     = 'arch_v3'
+MODEL      = 'wiformer_v3'   # wiformer_v3 | wiformer (v2)
+DATASET    = 'sshar_esp'     # sshar_esp | ut_har
+SPLIT_MODE = 'repeat622'     # sshar: repeat622 | repeat | user | position ; ut_har: bỏ qua
+CASE       = 0               # chỉ dùng cho user (0..4) / position (0..3)
+# v3: full wo_freq wo_main wo_block1 wo_block2 wo_block3
+VARIANTS   = ['full', 'wo_freq', 'wo_main']
+EXTRA      = '--epochs=100'  # vd '--epochs=2' để chạy thử, '--window_sec=0.28'
+RUN_TAG    = 'ablation_v3'
+PREV_RESULTS = ''            # vd '/kaggle/input/<output-phien-truoc>/results/ablation_v3'
+
+import os, subprocess, shutil, shlex, time
+from pathlib import Path
+CODE_DIR, OUTPUT = '/kaggle/working/cmr_har_code', '/kaggle/working'
+DATA_ROOT = DATA_PATHS[DATASET]
+assert Path(DATA_ROOT).is_dir(), f'Không thấy {DATA_ROOT}: kiểm tra Add Input / DATA_PATHS'
+print('DATA_ROOT =', DATA_ROOT); print(sorted(os.listdir(DATA_ROOT))[:10])
+
+subprocess.run(['rm', '-rf', CODE_DIR], check=True)
+subprocess.run(['git', 'clone', '--depth', '1', '-b', BRANCH, REPO_URL, CODE_DIR], check=True)
+!cd {CODE_DIR} && git log -1 --format='commit %h | %ci | %s'
+!pip install -q einops thop
+
+
+# ============================== CELL 2 ==============================
+import pandas as pd
+
+def run(cmd):
+    print('$', ' '.join(cmd), flush=True)
+    proc = subprocess.Popen(cmd, cwd=CODE_DIR, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    for line in proc.stdout:
+        print(line, end='', flush=True)
+    return proc.wait()
+
+RESULT_BASE = f'{OUTPUT}/results/{RUN_TAG}'
+os.makedirs(RESULT_BASE, exist_ok=True)
+if PREV_RESULTS and Path(PREV_RESULTS).is_dir():          # run đã xong sẽ bị --skip_done bỏ qua
+    shutil.copytree(PREV_RESULTS, RESULT_BASE, dirs_exist_ok=True)
+
+t0 = time.time()
+run(['python', '-u', 'ablation.py', f'--model={MODEL}', f'--data_root={DATA_ROOT}',
+     f'--dataset={DATASET}', f'--result_root={RESULT_BASE}', '--skip_done',
+     f'--split_mode={SPLIT_MODE}', f'--case_split={CASE}',
+     '--variants', *VARIANTS, '--extra', *shlex.split(EXTRA)])
+print(f'\nTotal time: {(time.time() - t0) / 3600:.2f} h')
+
+# Tổng hợp (kể cả run từ phiên trước): test + train / val, rồi cổng theo lớp / hoán vị RX (v3)
+for csv in sorted(Path(RESULT_BASE).glob('ablation_*.csv')):
+    df = pd.read_csv(csv)
+    df = df[[c for c in ['folder', 'accuracy', 'f1_macro', 'val_acc', 'train_acc', 'delta_acc',
+                         'best_epoch', 'epochs_trained', 'total_params', 'training_time'] if c in df]]
+    print('\n#', csv.name); print(df.round(4).to_string(index=False))
+for d in sorted(p for p in Path(RESULT_BASE).iterdir() if p.is_dir()):
+    print(f'\n######## {d.name}')
+    for f in ('summary_splits.csv', 'test/confusion_matrix_rowpct.csv',
+              'gate_by_class.csv', 'rx_permutation.json'):
+        if (d / f).exists():
+            print(f'# {f}\n' + (d / f).read_text())
+
+zip_path = shutil.make_archive(f'{OUTPUT}/results_{RUN_TAG}', 'zip', f'{OUTPUT}/results', RUN_TAG)
+print(zip_path, f'{os.path.getsize(zip_path) / 1e6:.1f} MB')
+shutil.rmtree(CODE_DIR, ignore_errors=True)
