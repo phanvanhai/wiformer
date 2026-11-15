@@ -3,9 +3,11 @@
 > Nhánh: `arch_v3` · Trạng thái: **đã code** (`models/wiformer_v3.py`, model `wiformer_v3`), chưa chạy thực nghiệm (cập nhật 2026-11-15)
 > Dữ liệu tham chiếu: SSHAR-ESP, 3 RX × 56 subcarrier × 1000 điểm (5 s, 200 Hz). Code hỗ trợ cả UT-HAR (mục 16).
 >
+> **Chuẩn hóa:** với SSHAR-ESP, dataset không chuẩn hóa toàn cục nữa (`normalize=False`); v3 tự chuẩn hóa theo mẫu (mục 9), vốn triệt tiêu mọi z-score toàn cục.
+>
 > **Cửa sổ:** độ dài cửa sổ tính theo giây, không quá 0.3 s: `W = floor(0.3 · fs)` (làm chẵn), stride `W/2`. Với SSHAR-ESP: **W = 60 (0.30 s), stride 30, n_win = 32, phổ 30 bin (3.33–100 Hz, 3.33 Hz/bin)**. Các hình và bảng phía dưới được tính với W = 64 (30 window, 32 bin); cấu trúc không đổi, chỉ khác các kích thước này. Số tham số đo thực tế của `v3_full` trên SSHAR-ESP là **462,184** (gồm head phụ 648).
 >
-> **Chia dữ liệu:** SSHAR-ESP dùng split `repeat622` (6:2:2 theo lần lặp): `dir00` rep 1–6 / 7–8 / 9–10, `dir01`/`dir02` rep 1–3 / 4 / 5 (cả hai hướng); mỗi (người, hành động) 48 / 16 / 16, tổng 3840 / 1280 / 1280; tập test trùng với protocol 7:1:2. UT-HAR dùng split có sẵn của dataset (X_train / X_val / X_test).
+> **Chia dữ liệu:** mọi split đều 6:2:2. SSHAR-ESP theo lần lặp dùng `repeat` (trước đây tên `repeat622`): `dir00` rep 1–6 / 7–8 / 9–10, `dir01`/`dir02` rep 1–3 / 4 / 5 (cả hai hướng); mỗi (người, hành động) 48 / 16 / 16, tổng 3840 / 1280 / 1280; tập test trùng với protocol 7:1:2. UT-HAR dùng split có sẵn của dataset (X_train / X_val / X_test).
 > Nhãn: 0 ngồi xuống · 1 đứng lên · 2 cúi nhặt · 3 ngã · 4 nằm im · 5 đi · 6 chạy · 7 phòng trống.
 
 ---
@@ -609,7 +611,7 @@ v3 được xem là một mô hình mới: mọi so sánh đều nằm **trong n
 
 ### 15.1 Đợt 1: ablation lõi (bỏ từng khối / nhánh)
 
-Cấu hình: SSHAR-ESP, split **`repeat622`** (6:2:2 theo lần lặp) trước, seed 42. Lệnh: `python ablation.py --model=wiformer_v3 --data_root=<...> --dataset=sshar_esp`. Mỗi biến thể bỏ đúng **một** khối hoặc nhánh, mọi phần khác giữ như `v3_full`.
+Cấu hình: SSHAR-ESP, split **`repeat`** (6:2:2 theo lần lặp) trước, seed 42. Lệnh: `python ablation.py --model=wiformer_v3 --data_root=<...> --dataset=sshar_esp`. Mỗi biến thể bỏ đúng **một** khối hoặc nhánh, mọi phần khác giữ như `v3_full`.
 
 | # | Tên | Bỏ gì | Thay bằng |
 |---|---|---|---|

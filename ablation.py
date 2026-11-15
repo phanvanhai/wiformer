@@ -24,8 +24,8 @@ python ablation.py --data_root=".\\data\\" --dataset=sshar_esp ^
 # only rebuild the summary table from finished runs
 python ablation.py --dataset=xrf55 --summary_only
 
-# WiFormer v3 core ablation (every split is 6:2:2; v3 default label repeat622 = repeat)
-# result folders: <result_root>/<dataset>_<split>_<variant>, e.g. sshar_esp_repeat622_full,
+# WiFormer v3 core ablation (every split is 6:2:2)
+# result folders: <result_root>/<dataset>_<split>_<variant>, e.g. sshar_esp_repeat_full,
 #                 ut_har_official_wo_freq, sshar_esp_user_c0_full
 python ablation.py --model=wiformer_v3 --data_root=".\\data\\" --dataset=sshar_esp
 python ablation.py --model=wiformer_v3 --data_root=".\\data\\" --dataset=ut_har
@@ -175,9 +175,8 @@ def parse_args():
     p.add_argument("--summary_only", action="store_true")
     p.add_argument("--list", action="store_true")
     p.add_argument("--split_mode", type=str, default=None,
-                   choices=["repeat", "repeat622", "user", "position", "repeat712"],
-                   help="all 6:2:2 (repeat622 = repeat, kept for the v3 folder names); "
-                        "default: repeat622 (wiformer_v3), repeat (wiformer); ignored for ut_har")
+                   choices=["repeat", "user", "position"],
+                   help="all 6:2:2; default repeat; ignored for ut_har")
     p.add_argument("--case_split", type=int, default=0, help="case for --split_mode user / position")
     p.add_argument("--extra", nargs=argparse.REMAINDER, default=[],
                    help="Everything after --extra is passed to main.py (e.g. --epochs=50)")
@@ -300,7 +299,7 @@ def main():
     if args.result_root is None:
         args.result_root = "results/ablation_v3" if args.model == "wiformer_v3" else "results/ablation"
     if args.split_mode is None:
-        args.split_mode = "repeat622" if args.model == "wiformer_v3" else "repeat"
+        args.split_mode = "repeat"
     variants, sets = tables(args.model)
 
     if args.list:

@@ -28,12 +28,10 @@ from torch.utils.data import DataLoader
 # Every split is train:val:test = 6:2:2 (same as CodeForPaper/benchmark, experiment plan v2).
 # Split modes:
 #   "repeat"    : by repetition index, 6:2:2 (SSHAR and XRF55)
-#   "repeat622" : alias of "repeat" (name used by the first WiFormer v3 runs)
 #   "user"      : cross-user (SSHAR: 6 / 2 / 2 subjects; XRF55: held-out users, rest 3:1)
 #   "position"  : SSHAR only, cross-position: test = positions with
 #                 pos % N_POSITION_CASES == case_split (2 of 8), rest train:val = 3:1
-#   "repeat712" : OLD SSHAR protocol 3B (7:1:2), only to reproduce old results
-SPLIT_MODES = ("repeat", "repeat622", "user", "position", "repeat712")
+SPLIT_MODES = ("repeat", "user", "position")
 N_POSITION_CASES = 4
 DEFAULT_SPLIT_MODE = "repeat"
 
@@ -42,7 +40,7 @@ def _check_split_mode(split_mode):
     split_mode = (split_mode or DEFAULT_SPLIT_MODE).lower()
     if split_mode not in SPLIT_MODES:
         raise ValueError(f"split_mode must be one of {SPLIT_MODES}, got '{split_mode}'")
-    return "repeat" if split_mode == "repeat622" else split_mode
+    return split_mode
 
 
 # ---- SSHAR: fixed train/val/test rules (SSHAR_ESP_protocol.md, 6:2:2) ----
@@ -60,20 +58,6 @@ def sshar_repeat_split_of(pos, direction, rep):
     if direction == 0:
         return "test" if rep > 8 else "val" if rep > 6 else "train"
     return "test" if rep == 5 else "val" if rep == 4 else "train"
-
-
-# kept for imports that still use the old name
-sshar_repeat622_split_of = sshar_repeat_split_of
-
-
-def sshar_repeat712_split_of(pos, direction, rep):
-    """OLD protocol 3B (7:1:2): per (subject, action) 80 recordings -> 56 / 8 / 16."""
-    if direction == 0:                      # dir00: 10 repetitions
-        return "test" if rep > 8 else "val" if rep == 8 else "train"
-    if rep == 5:                            # dir01 / dir02: 5 repetitions
-        return "test"
-    val_dir = 1 if pos % 2 else 2           # odd pos -> dir01, even pos -> dir02
-    return "val" if rep == 4 and direction == val_dir else "train"
 
 
 def sshar_user_split_of(subject_id, user_case=0):
@@ -557,9 +541,6 @@ class _SSHARDatasetBase(Dataset):
                     if self.split_mode == "repeat":
                         # Theo lan lap, 6:2:2
                         fixed = sshar_repeat_split_of(pos, direction, rep)
-                    elif self.split_mode == "repeat712":
-                        # Protocol 3B cu: theo lan lap, 7:1:2
-                        fixed = sshar_repeat712_split_of(pos, direction, rep)
                     elif self.split_mode == "position":
                         # Chia theo vi tri: giu lai 2/8 vi tri lam test, phan con lai train:val = 3:1
                         held_out = pos % N_POSITION_CASES == self.case_split
@@ -929,7 +910,7 @@ class XRF55Dataset(Dataset):
                 if action_id_int not in self.label_map:
                     continue
 
-                if self.split_mode in ("position", "repeat712"):
+                if self.split_mode == "position":
                     raise ValueError(f"split_mode='{self.split_mode}' is only available for SSHAR")
                 if self.split_mode == "repeat":
                     # Theo lan lap 6:2:2: rep 1-12 / 13-16 / 17-20
@@ -1082,10 +1063,9 @@ def load_dataset(
 
     Split:
       All splits 6:2:2 (as CodeForPaper/benchmark, experiment plan v2):
-      SSHAR repeat    -> by repetition (3840 / 1280 / 1280); repeat622 = alias
+      SSHAR repeat    -> by repetition (3840 / 1280 / 1280)
       SSHAR user      -> 6 / 2 / 2 subjects (case 0..4), 3840 / 1280 / 1280
       SSHAR position  -> test = held-out positions (2/8), rest train:val = 3:1
-      SSHAR repeat712 -> OLD protocol 3B, 7:1:2 (only to reproduce old results)
       XRF55 repeat    -> rep 1-12 / 13-16 / 17-20
       XRF55 user      -> test = held-out users, rest train:val = 3:1
       ut_har          -> the dataset's own X_train / X_val / X_test files
@@ -1111,9 +1091,6 @@ def load_dataset(
     elif split_mode == "repeat" and sshar:
         print("Split mode = repeat (6:2:2 by repetition: dir00 rep1-6/7-8/9-10; "
               "dir01/02 rep1-3/4/5 of both directions)")
-    elif split_mode == "repeat712" and sshar:
-        print("Split mode = repeat712 (OLD protocol 3B, 7:1:2: dir00 rep1-7/8/9-10; "
-              "dir01/02 rep1-3 + rep4 of one dir / rep4 of the other dir / rep5)")
     elif split_mode == "user" and sshar:
         users = USER_CASES["sshar"][case_split]
         val_u = {SSHAR_VAL_SUBJECTS[case_split], SSHAR_VAL_SUBJECTS_2[case_split]}

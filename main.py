@@ -387,10 +387,10 @@ def parse_args():
             "--split_mode",
             type=str,
             default="repeat",
-            choices=["repeat", "repeat622", "user", "position", "repeat712"],
-            help="split, all 6:2:2: 'repeat' / 'repeat622' (same: by repetition; SSHAR dir00 1-6/7-8/9-10, "
+            choices=["repeat", "user", "position"],
+            help="split, all 6:2:2: 'repeat' (by repetition; SSHAR dir00 1-6/7-8/9-10, "
                  "dir01/02 1-3/4/5; XRF55 rep 1-12/13-16/17-20), 'user' (cross-user, uses --case_split; "
-                 "SSHAR 6/2/2 subjects), 'repeat712' (OLD SSHAR protocol 7:1:2) "
+                 "SSHAR 6/2/2 subjects) "
                  "or 'position' (SSHAR cross-position, --case_split 0..3 holds out pos %% 4 == case)"
         )
 
@@ -487,6 +487,10 @@ def main():
     dataset_kwargs = {}
     dataset_kwargs["case_split"] = args.case_split
     dataset_kwargs["split_mode"] = args.split_mode
+    if args.model == "wiformer_v3" and args.dataset.startswith("sshar"):
+        # WiFormer v3 normalises every sample itself (mean per (rx, sub), std per rx),
+        # which cancels any global z-score -> skip the dataset's mean/std pass.
+        dataset_kwargs["normalize"] = False
 
     if args.model == "cnn_gru":
         train_loader, val_loader, test_loader, info = load_dataset(

@@ -68,8 +68,7 @@ Mọi cách chia đều theo tỉ lệ **6:2:2**, giống benchmark `CodeForPape
 (mỗi lớp 480 / 160 / 160). Trong mọi trường hợp, một bản ghi (cả 3 receiver) luôn nằm trọn trong một
 tập, và không xáo trộn ngẫu nhiên từng mẫu rồi mới chia.
 
-Protocol cũ 7:1:2 (4480 / 640 / 1280) vẫn chạy được với `--split_mode repeat712` (chỉ theo lần lặp),
-chỉ để tái lập kết quả cũ.
+Protocol cũ 7:1:2 (4480 / 640 / 1280) đã bỏ khỏi code.
 
 ### 3A. Cross-user (`--split_mode user`)
 
@@ -112,7 +111,7 @@ def sshar_user_split_of(subject_id, user_case=0):
     return 'train'
 ```
 
-### 3B. Chia theo lần lặp (`--split_mode repeat`, tên khác `repeat622`)
+### 3B. Chia theo lần lặp (`--split_mode repeat`)
 
 Chia **theo lần lặp**: người nào, vị trí nào cũng có mặt ở cả ba tập. Với **mỗi cặp (người, hành
 động)**, 80 bản ghi được chia đúng **48 / 16 / 16**. Quy tắc giống hệt `v2_split_of` trong benchmark.

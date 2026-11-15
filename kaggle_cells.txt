@@ -53,7 +53,7 @@
 #
 # SPLIT_MODE / CASE
 #   Tất cả 6:2:2:
-#   repeat622 / repeat  theo lần lặp (2 tên cùng một cách chia; v3 mặc định ghi 'repeat622')
+#   repeat              theo lần lặp (mặc định)
 #                       sshar: dir00 rep 1-6/7-8/9-10, dir01/02 rep 1-3/4/5 -> 3840/1280/1280
 #                       xrf55: rep 1-12/13-16/17-20
 #   user                cross-user, CASE 0..4. sshar: 6/2/2 người -> 3840/1280/1280
@@ -63,10 +63,9 @@
 #                       case 3: train 3,4,10,12,13,14 | val 2,11 | test 1,9
 #                       case 4: train 1,2,4,11,13,14 | val 9,10 | test 3,12
 #   position            cross-position (sshar), CASE 0..3: test = 2/8 vị trí, còn lại train:val = 3:1
-#   repeat712           protocol CŨ 7:1:2 (chỉ để tái lập kết quả cũ)
 #   (ut_har bỏ qua SPLIT_MODE, luôn dùng split có sẵn; thư mục ghi 'official')
 #
-# Output (mỗi run một thư mục <dataset>_<split>_<variant>, vd sshar_esp_repeat622_full,
+# Output (mỗi run một thư mục <dataset>_<split>_<variant>, vd sshar_esp_repeat_full,
 #         ut_har_official_wo_freq, sshar_esp_user_c0_full):
 #   config.json, metrics.json (test), history.csv, learning_curve.png, best_model.pth
 #   summary_splits.csv                      acc / P / R / F1 của train, val, test
@@ -93,7 +92,7 @@ REPO_URL   = 'https://github.com/phanvanhai/wiformer.git'
 BRANCH     = 'arch_v3'
 MODEL      = 'wiformer_v3'   # wiformer_v3 | wiformer (v2)
 DATASET    = 'sshar_esp'     # sshar_esp | ut_har
-SPLIT_MODE = 'repeat622'     # repeat622 | user | position (đều 6:2:2) ; ut_har: bỏ qua
+SPLIT_MODE = 'repeat'        # repeat | user | position (đều 6:2:2) ; ut_har: bỏ qua
 CASE       = 0               # chỉ dùng cho user (0..4) / position (0..3)
 VARIANTS   = ['full', 'wo_main']   # danh sách đầy đủ: xem "CÁC TUỲ CHỌN" ở đầu file
 EXTRA      = '--epochs=100'        # xem "CÁC TUỲ CHỌN"; vd '--epochs=2' để chạy thử
