@@ -138,6 +138,9 @@ V4_VARIANTS = {
     # spectral view only + mean over Rx x Sub (= averaged spectrum); compare with wo_conv
     "freq_mean": ("Block 2", "Spectral view only, mean over Rx x Sub (averaged spectrum)",
                   ["--v4_ablation=freq_mean"]),
+    # two branches per window: Conv tokens -> Block 2, and the averaged spectrum; fused before Block 3
+    "hybrid": ("Fusion", "[Conv -> Block 2] + averaged spectrum, fused per window",
+               ["--v4_ablation=hybrid"]),
     # UT_HAR: no per-sample normalisation inside the model (keep the static level)
     "nonorm": ("Norm", "No per-sample normalisation in the model (keep static level)",
                ["--v4_ablation=full", "--norm=none"]),

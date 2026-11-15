@@ -35,6 +35,10 @@ Core ablation (`ablation`):
     freq_mean - wo_conv + wo_block2: spectral view only, mean over the R*S tokens of a window.
                 Token and fuse are linear, so this equals Linear(mean log-spectrum over rx, sub):
                 tests "attention over per-sub spectra" (wo_conv) vs "averaged spectrum"
+    hybrid    - two branches per window, fused before Block 3:
+                  time branch     : token = Conv only -> Block 2 attention -> CLS h_k   (D)
+                  spectral branch : log1p|rfft| without DC, mean over (rx, sub) -> Linear a_k (D)
+                  z_k = Linear(2D -> D)([h_k || a_k]) -> Block 3 -> classifier
 """
 
 import json
@@ -58,7 +62,7 @@ DATASET_FS = {
 }
 
 
-ABLATIONS = ("full", "wo_fft", "wo_conv", "wo_block1", "wo_block2", "wo_block3", "freq_mean")
+ABLATIONS = ("full", "wo_fft", "wo_conv", "wo_block1", "wo_block2", "wo_block3", "freq_mean", "hybrid")
 
 
 # ============================================================
@@ -318,6 +322,36 @@ class TwoViewExtractor(nn.Module):
 
 
 # ============================================================
+# hybrid - per-window fusion of Block 2 output and the averaged spectrum
+# ============================================================
+class WindowFusion(nn.Module):
+    """
+    spectral : log1p|rfft(W)| without DC (W//2 bins), mean over the R*S channels of a
+               window -> Linear(W//2, D) -> a_k
+    fuse     : Linear(2D, D) on [h_k || a_k]   (h_k = Block 2 output of the Conv tokens)
+    `knock` ("time" / "freq" / None) zeroes one branch at inference (analysis only).
+    """
+
+    def __init__(self, window, d_model):
+        super().__init__()
+        self.n_bins = window // 2
+        self.proj_freq = nn.Linear(self.n_bins, d_model)
+        self.fuse = nn.Linear(2 * d_model, d_model)
+        self.knock = None
+
+    def forward(self, h, seg):
+        # h: (B, K, D), seg: (B, R, S, K, W) -> (B, K, D)
+        spec = torch.fft.rfft(seg.float(), dim=-1).abs()
+        spec = torch.log1p(spec)[..., 1:1 + self.n_bins].mean(dim=(1, 2)).to(h.dtype)   # (B, K, n_bins)
+        a = self.proj_freq(spec)
+        if self.knock == "time":
+            h = torch.zeros_like(h)
+        elif self.knock == "freq":
+            a = torch.zeros_like(a)
+        return self.fuse(torch.cat([h, a], dim=-1))
+
+
+# ============================================================
 # Full model
 # ============================================================
 class WiFormerV4(BaseModel):
@@ -398,13 +432,15 @@ class WiFormerV4(BaseModel):
 
         self.block1 = TwoViewExtractor(
             d_model, feat, window, k1_conv, k1_pool,
-            use_time=ablation not in ("wo_conv", "freq_mean"), use_freq=ablation != "wo_fft",
+            use_time=ablation not in ("wo_conv", "freq_mean"), use_freq=ablation not in ("wo_fft", "hybrid"),
             raw=ablation == "wo_block1",
         )
         self.block2 = RxSubAttention(
             R, S, d_model, k2_heads, k2_layers, k2_ff, dropout, activation, norm_first,
             pool=ablation in ("wo_block2", "freq_mean"),
         )
+        # hybrid: averaged-spectrum branch fused with Block 2 output per window
+        self.win_fusion = WindowFusion(window, d_model) if ablation == "hybrid" else None
         self.block3 = TemporalTransformer(
             self.n_win, d_model, k3_heads, 0 if ablation == "wo_block3" else k3_layers,
             k3_ff, dropout, activation, norm_first,
@@ -449,6 +485,8 @@ class WiFormerV4(BaseModel):
         K = seg.shape[3]
         v = self.block1(seg.permute(0, 1, 3, 2, 4).reshape(-1, self.window))
         h = self.block2(v.reshape(B, R, K, S, -1))                        # (B, K, D)
+        if self.win_fusion is not None:
+            h = self.win_fusion(h, seg)                                   # (B, K, D)
         return self.classifier(self.block3(h))
 
     # --------------------------------------------------------
@@ -456,8 +494,9 @@ class WiFormerV4(BaseModel):
     def analyze(self, loader, device, save_dir):
         """
         After training (best checkpoint), on the test loader:
-        - view_contribution.json : Block 1 fuse weight norm per view, and the test
-          accuracy (overall + per class) when one view is zeroed (knock-out)
+        - view_contribution.json : fuse weight norm per view (Block 1 fuse; hybrid: the
+          per-window fuse), and the test accuracy (overall + per class) when one view
+          is zeroed (knock-out)
         - block2_bias.json / block3_bias.json : learned bias tables
         - rx_permutation.json : prediction agreement when the views are permuted
         """
@@ -466,7 +505,11 @@ class WiFormerV4(BaseModel):
         R = self.n_rx
         perm = list(range(1, R)) + [0]                                    # cyclic shift of the views
         b1 = self.block1
-        two_views = not b1.raw and b1.use_time and b1.use_freq
+        # module holding `knock` and `fuse` ([time | freq] halves): Block 1, or the hybrid window fusion
+        if self.win_fusion is not None:
+            b1, two_views = self.win_fusion, True
+        else:
+            two_views = not b1.raw and b1.use_time and b1.use_freq
         modes = [None, "time", "freq"] if two_views else [None]
         hit = {m: {} for m in modes}                                      # mode -> class -> [n, correct]
         n, agree, max_diff = 0, 0, 0.0

@@ -344,9 +344,10 @@ def parse_args():
                         help="WiFormer stride (wiformer default 32, wiformer_v4 default W // 2)")
     # ---- WiFormer v4 ----
     parser.add_argument("--v4_ablation", type=str, default="full",
-                        choices=["full", "wo_fft", "wo_conv", "wo_block1", "wo_block2", "wo_block3", "freq_mean"],
+                        choices=["full", "wo_fft", "wo_conv", "wo_block1", "wo_block2", "wo_block3", "freq_mean", "hybrid"],
                         help="WiFormer v4 core ablation (Block 1 views / remove one block); "
-                             "freq_mean = spectral view only + mean over Rx x Sub")
+                             "freq_mean = spectral view only + mean over Rx x Sub; "
+                             "hybrid = [Conv -> Block 2] fused per window with the averaged spectrum")
     parser.add_argument("--norm", type=str, default="sub", choices=["sub", "none"],
                         help="WiFormer v4 per-sample normalisation: sub = minus mean per (rx, sub), / std per rx "
                              "(default); none = keep the loader's input (UT_HAR: per-sample min-max), "

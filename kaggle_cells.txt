@@ -11,7 +11,7 @@
 # Train (wiformer_v4, wiformer): Adam, lr đỉnh 1e-3, warmup 5 epoch + cosine về 0 ở epoch 100,
 #   KHÔNG dừng sớm (patience = 0), checkpoint = epoch có val acc cao nhất.
 # Thời gian trên SSHAR-ESP (T4), 100 epoch: v4 full ~3.8 h, wo_fft ~3.3 h, wo_block3 ~3.5 h,
-#   wo_block2 ~3.1 h, wo_conv / wo_block1 ~1.3-1.4 h, freq_mean ~0.6-0.8 h
+#   wo_block2 ~3.1 h, wo_conv / wo_block1 ~1.3-1.4 h, freq_mean ~0.7 h, hybrid ~3.3 h
 #   -> 1 phiên 12 h chạy được ~2-3 biến thể nặng. UT_HAR: ~45 phút / biến thể.
 # Chạy tiếp phiên sau: thêm Output phiên trước làm Input, đặt PREV_RESULTS
 # (run đã xong sẽ được bỏ qua).
@@ -27,6 +27,8 @@
 #   wo_block3  Khối 3 = trung bình qua các window
 #   freq_mean  chỉ phổ + trung bình token Rx x Sub (= phổ trung bình qua sub, rx); so với wo_conv
 #              -> attention chọn phổ từng sub hay lấy trung bình phổ tốt hơn (~40-50 phút)
+#   hybrid     mỗi window 2 nhánh: token Conv -> Khối 2 (attention) và phổ trung bình qua (rx, sub);
+#              gộp Linear(2D -> D) theo window rồi vào Khối 3 (~3.3 h)
 #   nonorm     full, không chuẩn hoá theo mẫu trong mô hình -> dùng cho UT_HAR
 #
 # VARIANTS (wiformer v2, MODEL = 'wiformer'; python ablation.py --list)
