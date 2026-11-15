@@ -35,6 +35,9 @@ Core ablation (`ablation`):
     wo_block1 - Block 1 = Linear(W, D) on the raw segment
     wo_block2 - Block 2 = mean over the R*S tokens of a window
     wo_block3 - Block 3 = mean over the windows
+    freq_mean - wo_conv + wo_block2: spectral view only, mean over the R*S tokens of a window.
+                Token and fuse are linear, so this equals Linear(mean log-spectrum over rx, sub):
+                tests "attention over per-sub spectra" (wo_conv) vs "averaged spectrum"
 """
 
 import json
@@ -48,7 +51,7 @@ from .base import BaseModel
 from .wiformer import WIFORMER_DATASET_CFG
 from .wiformer_v3 import DATASET_FS, ConvExtractor, RxSubAttention, TemporalTransformer
 
-ABLATIONS = ("full", "wo_fft", "wo_conv", "wo_block1", "wo_block2", "wo_block3")
+ABLATIONS = ("full", "wo_fft", "wo_conv", "wo_block1", "wo_block2", "wo_block3", "freq_mean")
 
 
 # ============================================================
@@ -182,12 +185,12 @@ class WiFormerV4(BaseModel):
 
         self.block1 = TwoViewExtractor(
             d_model, feat, window, k1_conv, k1_pool,
-            use_time=ablation != "wo_conv", use_freq=ablation != "wo_fft",
+            use_time=ablation not in ("wo_conv", "freq_mean"), use_freq=ablation != "wo_fft",
             raw=ablation == "wo_block1",
         )
         self.block2 = RxSubAttention(
             R, S, d_model, k2_heads, k2_layers, k2_ff, dropout, activation, norm_first,
-            pool=ablation == "wo_block2",
+            pool=ablation in ("wo_block2", "freq_mean"),
         )
         self.block3 = TemporalTransformer(
             self.n_win, d_model, k3_heads, 0 if ablation == "wo_block3" else k3_layers,

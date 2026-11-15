@@ -25,6 +25,8 @@
 #   wo_block1  Khối 1 = Linear(W, D) trên đoạn thô
 #   wo_block2  Khối 2 = trung bình các token Rx x Sub
 #   wo_block3  Khối 3 = trung bình qua các window
+#   freq_mean  chỉ phổ + trung bình token Rx x Sub (= phổ trung bình qua sub, rx); so với wo_conv
+#              -> attention chọn phổ từng sub hay lấy trung bình phổ tốt hơn (~40-50 phút)
 #   nonorm     full, không chuẩn hoá theo mẫu trong mô hình -> dùng cho UT_HAR
 #
 # VARIANTS (wiformer_v3, xem: python ablation.py --model=wiformer_v3 --list)

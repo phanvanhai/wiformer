@@ -351,8 +351,9 @@ def parse_args():
                         help="WiFormer v3 fusion: late = two streams, per-class late fusion of logits (option C); "
                              "gate = gated residual at M (first v3 design)")
     parser.add_argument("--v4_ablation", type=str, default="full",
-                        choices=["full", "wo_fft", "wo_conv", "wo_block1", "wo_block2", "wo_block3"],
-                        help="WiFormer v4 core ablation (Block 1 views / remove one block)")
+                        choices=["full", "wo_fft", "wo_conv", "wo_block1", "wo_block2", "wo_block3", "freq_mean"],
+                        help="WiFormer v4 core ablation (Block 1 views / remove one block); "
+                             "freq_mean = spectral view only + mean over Rx x Sub")
     parser.add_argument("--v3_norm", type=str, default="sub", choices=["sub", "none"],
                         help="WiFormer v3 / v4 per-sample normalisation: sub = minus mean per (rx, sub), / std per rx "
                              "(default); none = keep the loader's input (UT_HAR: per-sample min-max), "

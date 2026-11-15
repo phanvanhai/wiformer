@@ -159,6 +159,9 @@ V4_VARIANTS = {
     "wo_block1": ("Block 1", "w/o Block 1 (Linear(W,D) on raw window)", ["--v4_ablation=wo_block1"]),
     "wo_block2": ("Block 2", "w/o Block 2 (mean over Rx x Sub)", ["--v4_ablation=wo_block2"]),
     "wo_block3": ("Block 3", "w/o Block 3 (mean over windows)", ["--v4_ablation=wo_block3"]),
+    # spectral view only + mean over Rx x Sub (= averaged spectrum); compare with wo_conv
+    "freq_mean": ("Block 2", "Spectral view only, mean over Rx x Sub (averaged spectrum)",
+                  ["--v4_ablation=freq_mean"]),
     # UT_HAR: no per-sample normalisation inside the model (keep the static level)
     "nonorm": ("Norm", "No per-sample normalisation in the model (keep static level)",
                ["--v4_ablation=full", "--v3_norm=none"]),
