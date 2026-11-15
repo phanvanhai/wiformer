@@ -8,18 +8,18 @@
 #
 # Split: mọi kiểu chia đều 6:2:2 (giống benchmark CodeForPaper, experiment plan v2);
 #        ut_har luôn dùng split có sẵn (X_train / X_val / X_test).
-# Train (wiformer_v3): Adam, lr đỉnh 1e-3, warmup 5 epoch + cosine về 0 ở epoch 100,
+# Train (wiformer_v4, wiformer): Adam, lr đỉnh 1e-3, warmup 5 epoch + cosine về 0 ở epoch 100,
 #   KHÔNG dừng sớm (patience = 0), checkpoint = epoch có val acc cao nhất.
-# Thời gian trên SSHAR-ESP (T4), 100 epoch: v3 full / wo_freq ~4 h, v3 wo_main < 1 h;
-#   v4 full / wo_fft / wo_block3 ~4 h, wo_block2 ~3 h, wo_conv / wo_block1 ~1-1.5 h (ước theo MACs)
+# Thời gian trên SSHAR-ESP (T4), 100 epoch: v4 full ~3.8 h, wo_fft ~3.3 h, wo_block3 ~3.5 h,
+#   wo_block2 ~3.1 h, wo_conv / wo_block1 ~1.3-1.4 h, freq_mean ~0.6-0.8 h
 #   -> 1 phiên 12 h chạy được ~2-3 biến thể nặng. UT_HAR: ~45 phút / biến thể.
 # Chạy tiếp phiên sau: thêm Output phiên trước làm Input, đặt PREV_RESULTS
 # (run đã xong sẽ được bỏ qua).
 #
 # ---------------------------- CÁC TUỲ CHỌN ----------------------------
 # VARIANTS (wiformer_v4, xem: python ablation.py --model=wiformer_v4 --list)
-#   Kiến trúc: WiFormer_v4_Architecture.md (Khối 1 của v2 = token [Conv || FFT], Khối 2-3 của v3)
-#   full       v4 đầy đủ, 1 luồng                                       [mô hình đề xuất]
+#   Kiến trúc: WiFormer_v4_Architecture.md, WiFormer_Paper.md
+#   full       v4 đầy đủ                                                [mô hình đề xuất]
 #   wo_fft     token chỉ có Conv (bỏ góc nhìn phổ)
 #   wo_conv    token chỉ có phổ (bỏ Conv)
 #   wo_block1  Khối 1 = Linear(W, D) trên đoạn thô
@@ -28,19 +28,6 @@
 #   freq_mean  chỉ phổ + trung bình token Rx x Sub (= phổ trung bình qua sub, rx); so với wo_conv
 #              -> attention chọn phổ từng sub hay lấy trung bình phổ tốt hơn (~40-50 phút)
 #   nonorm     full, không chuẩn hoá theo mẫu trong mô hình -> dùng cho UT_HAR
-#
-# VARIANTS (wiformer_v3, xem: python ablation.py --model=wiformer_v3 --list)
-#   full       2 luồng (thời gian + tốc độ), gộp muộn theo lớp            [mô hình đề xuất]
-#   wo_freq    chỉ luồng thời gian (bỏ luồng tốc độ)
-#   wo_main    chỉ luồng tốc độ (bỏ Khối 1 + Khối 2)
-#   wo_block1  Khối 1 = Linear(W, D) trên đoạn thô (bỏ Conv)
-#   wo_block2  Khối 2 = trung bình các token Rx x Sub (bỏ attention)
-#   wo_block3  Khối 3 = trung bình qua các window (bỏ Transformer thời gian)
-#   gate_full  thiết kế đầu tiên: cổng dư ở M + 1 Khối 3 (để so sánh)
-#   nonorm     full nhưng KHÔNG chuẩn hoá theo mẫu trong mô hình (giữ mức tĩnh từng kênh)
-#              -> thí nghiệm riêng cho UT_HAR: DATASET='ut_har', VARIANTS=['nonorm']
-#   nonorm_cw  nonorm + trọng số lớp đặt tay của AMCS-TCN cho UT_HAR [1,1,0.8,1,0.8,1.5,2]
-#              (lie_down, fall, walk, pickup, run, sit_down, stand_up) -> chỉ dùng cho ut_har
 #
 # VARIANTS (wiformer v2, MODEL = 'wiformer'; python ablation.py --list)
 #   v2 trên nhánh này dùng CHUNG chuẩn hoá với v4 (trừ mean theo (rx, sub), chia 1 std mỗi rx,
@@ -59,23 +46,17 @@
 #                             danh sách K số, vd '--class_weights=1,1,0.8,1,0.8,1.5,2'
 #     --scheduler=reducelronplateau --scheduler-patience=4 --scheduler-gamma=0.5
 #                             (thay cosine bằng giảm lr khi val chững lại)
-#   Cửa sổ (v3)
+#   Cửa sổ (v4)
 #     --window_sec=0.3        độ dài cửa sổ (giây), stride = W/2
-#                             v3: W = floor(window_sec * fs) chẵn (ESP 60, UT_HAR 36)
-#                             v4: W = lũy thừa 2 gần nhất (ESP 64 = 0.32 s, UT_HAR 32 = 0.256 s)
-#     --window=60 --stride=30 đặt trực tiếp theo số mẫu (ghi đè window_sec)
+#                             W = lũy thừa 2 gần nhất (ESP 64 = 0.32 s, UT_HAR 32 = 0.256 s)
+#     --window=64 --stride=32 đặt trực tiếp theo số mẫu (ghi đè window_sec)
 #     --fs=200                tần số lấy mẫu (mặc định sshar_esp 200 Hz, ut_har 125 Hz)
-#   Kiến trúc (v3; v4 dùng chung --v3_norm, --k2_*, --k3_layers, --k3_heads, --k1_*, --d_model, --dropout)
-#     --v3_fusion=late|gate   late = gộp muộn theo lớp (mặc định), gate = cổng dư ở M
-#     --v3_norm=sub|none      (v3 và v4) sub = trừ mean theo (rx, sub), chia std theo rx (mặc định);
+#   Kiến trúc (v4)
+#     --norm=sub|none         sub = trừ mean theo (rx, sub), chia std theo rx (mặc định);
 #                             none = không chuẩn hoá trong mô hình (biến thể nonorm)
-#     --k3_layers=6           số lớp Khối 3 của luồng thời gian
-#     --k3f_layers=2          số lớp Khối 3 của luồng tốc độ (vd 4/4: --k3_layers=4 --k3f_layers=4)
-#     --k2_layers=2           số lớp Khối 2
+#     --k2_layers=2 --k3_layers=6   số lớp Khối 2 / Khối 3
 #     --d_model=64 --k2_heads=4 --k3_heads=4 --dropout=0.1
 #     --k1_conv=3 --k1_pool=flat4   số lớp Conv1d / kiểu pool của Khối 1
-#     --aux_w=0.3             late: trọng số CE riêng của mỗi luồng; gate: trọng số head phụ
-#     --mdrop=0.3 --gate_bias=-2    chỉ dùng cho --v3_fusion=gate
 #
 # SPLIT_MODE / CASE
 #   Tất cả 6:2:2:
@@ -92,7 +73,7 @@
 #   (ut_har bỏ qua SPLIT_MODE, luôn dùng split có sẵn; thư mục ghi 'official')
 #
 # Output (mỗi run một thư mục <dataset>_<split>_<variant>, vd sshar_esp_repeat_full,
-#         ut_har_official_wo_freq, sshar_esp_user_c0_full):
+#         ut_har_official_nonorm, sshar_esp_user_c0_full):
 #   config.json, metrics.json (test), history.csv, learning_curve.png, best_model.pth
 #   summary_splits.csv                      acc / P / R / F1 của train, val, test
 #   train/ val/ test/                       với mỗi tập:
@@ -101,8 +82,6 @@
 #       confusion_matrix.png (số mẫu + %), predictions.csv (true / pred / xác suất)
 #   v4: view_contribution.json (trọng số fuse + knock-out time / freq theo lớp), block2/3_bias.json,
 #       rx_permutation.json
-#   v3: stream_by_class.csv (w_c + recall từng luồng theo lớp), block2/3/3f_bias.json,
-#       rx_permutation.json; gate_full: gate_by_class.csv
 # Bảng tổng hợp: ablation_<model>_<dataset>_<split>_custom.csv
 ############################################################################
 
@@ -118,7 +97,7 @@ DATA_PATHS = {
 
 REPO_URL   = 'https://github.com/phanvanhai/wiformer.git'
 BRANCH     = 'arch_v4'
-MODEL      = 'wiformer_v4'   # wiformer_v4 | wiformer_v3 | wiformer (v2)
+MODEL      = 'wiformer_v4'   # wiformer_v4 | wiformer (v2)
 DATASET    = 'sshar_esp'     # sshar_esp | ut_har
 SPLIT_MODE = 'repeat'        # repeat | user | position (đều 6:2:2) ; ut_har: bỏ qua
 CASE       = 0               # chỉ dùng cho user (0..4) / position (0..3)
@@ -162,7 +141,7 @@ run(['python', '-u', 'ablation.py', f'--model={MODEL}', f'--data_root={DATA_ROOT
      '--variants', *VARIANTS, '--extra', *shlex.split(EXTRA)])
 print(f'\nTotal time: {(time.time() - t0) / 3600:.2f} h')
 
-# Tổng hợp (kể cả run từ phiên trước): test + train / val, rồi cổng theo lớp / hoán vị RX (v3)
+# Tổng hợp (kể cả run từ phiên trước): test + train / val, knock-out góc nhìn, hoán vị RX
 for csv in sorted(Path(RESULT_BASE).glob('ablation_*.csv')):
     df = pd.read_csv(csv)
     df = df[[c for c in ['folder', 'accuracy', 'f1_macro', 'val_acc', 'train_acc', 'delta_acc',
@@ -170,8 +149,8 @@ for csv in sorted(Path(RESULT_BASE).glob('ablation_*.csv')):
     print('\n#', csv.name); print(df.round(4).to_string(index=False))
 for d in sorted(p for p in Path(RESULT_BASE).iterdir() if p.is_dir()):
     print(f'\n######## {d.name}')
-    for f in ('summary_splits.csv', 'test/confusion_matrix_rowpct.csv', 'stream_by_class.csv',
-              'gate_by_class.csv', 'view_contribution.json', 'rx_permutation.json'):
+    for f in ('summary_splits.csv', 'test/confusion_matrix_rowpct.csv',
+              'view_contribution.json', 'rx_permutation.json'):
         if (d / f).exists():
             print(f'# {f}\n' + (d / f).read_text())
 

@@ -304,5 +304,5 @@ Trên SSHAR-ESP, WiFormer đạt 96.80% (97.29% trên 6 hành động), vượt 
 Hướng tiếp theo:
 1. Đánh giá cross-user bằng 5 fold theo người, và thêm seed.
 2. Hoàn thiện ablation Khối 3 và `freq_mean`.
-3. Cải thiện góc nhìn phổ: cửa sổ Hann, nhúng phi tuyến, kèm phổ trung bình làm ngữ cảnh.
+3. Cải thiện góc nhìn phổ: cửa sổ Hann, nhúng phi tuyến.
 4. Khai thác vi chuyển động để phân biệt các trạng thái tĩnh mà không cần mức tĩnh.

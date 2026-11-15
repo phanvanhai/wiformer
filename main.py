@@ -96,7 +96,6 @@ def parse_args():
             "resnet1d",
             "cnn_gru",
             "wiformer",
-            "wiformer_v3",
             "wiformer_v4",
         ],
         help="Model name",
@@ -134,7 +133,7 @@ def parse_args():
         type=int,
         default=None,
         help="Early stopping: stop after N epochs without val-acc improvement (0 = off). "
-             "Default: 0 for wiformer_v3 / v4 (full cosine schedule), 10 for the other models",
+             "Default: 0 for wiformer / wiformer_v4 (full cosine schedule), 10 for the other models",
     )
 
     parser.add_argument(
@@ -340,39 +339,25 @@ def parse_args():
                         help="WiFormer: average every N adjacent subcarriers before Block 1 (56 -> 56/N tokens)")
     parser.add_argument("--window", type=int, default=None,
                         help="WiFormer window W in samples (wiformer default 64, 0 = one window over the "
-                             "whole sequence; wiformer_v3 default: from --window_sec and --fs)")
+                             "whole sequence; wiformer_v4 default: from --window_sec and --fs)")
     parser.add_argument("--stride", type=int, default=None,
-                        help="WiFormer stride (wiformer default 32, wiformer_v3 default W // 2)")
-    # ---- WiFormer v3 ----
-    parser.add_argument("--v3_ablation", type=str, default="full",
-                        choices=["full", "wo_freq", "wo_main", "wo_block1", "wo_block2", "wo_block3"],
-                        help="WiFormer v3 core ablation (remove one block / branch)")
-    parser.add_argument("--v3_fusion", type=str, default="late", choices=["late", "gate"],
-                        help="WiFormer v3 fusion: late = two streams, per-class late fusion of logits (option C); "
-                             "gate = gated residual at M (first v3 design)")
+                        help="WiFormer stride (wiformer default 32, wiformer_v4 default W // 2)")
+    # ---- WiFormer v4 ----
     parser.add_argument("--v4_ablation", type=str, default="full",
                         choices=["full", "wo_fft", "wo_conv", "wo_block1", "wo_block2", "wo_block3", "freq_mean"],
                         help="WiFormer v4 core ablation (Block 1 views / remove one block); "
                              "freq_mean = spectral view only + mean over Rx x Sub")
-    parser.add_argument("--v3_norm", type=str, default="sub", choices=["sub", "none"],
-                        help="WiFormer v3 / v4 per-sample normalisation: sub = minus mean per (rx, sub), / std per rx "
+    parser.add_argument("--norm", type=str, default="sub", choices=["sub", "none"],
+                        help="WiFormer v4 per-sample normalisation: sub = minus mean per (rx, sub), / std per rx "
                              "(default); none = keep the loader's input (UT_HAR: per-sample min-max), "
                              "i.e. keep the static level of each channel")
     parser.add_argument("--class_weights", type=str, default=None,
                         help="Weighted CE: comma list of K floats (e.g. AMCS-TCN UT_HAR: 1,1,0.8,1,0.8,1.5,2) "
                              "or 'auto' (inverse train frequency, mean 1). Default: none")
-    parser.add_argument("--k3f_layers", type=int, default=2,
-                        help="WiFormer v3 (late fusion): layers of the Block 3 of the speed stream")
     parser.add_argument("--window_sec", type=float, default=0.3,
-                        help="WiFormer v3: window length in seconds (W = floor(window_sec * fs), even)")
+                        help="WiFormer v4: window length in seconds (W = nearest power of two to window_sec * fs)")
     parser.add_argument("--fs", type=float, default=None,
-                        help="WiFormer v3: sampling rate in Hz (default per dataset: sshar_esp = 200)")
-    parser.add_argument("--mdrop", type=float, default=0.3,
-                        help="WiFormer v3: modality dropout probability on the speed branch")
-    parser.add_argument("--aux_w", type=float, default=0.3,
-                        help="WiFormer v3: weight of the auxiliary CE on the main branch (0 = off)")
-    parser.add_argument("--gate_bias", type=float, default=-2.0,
-                        help="WiFormer v3: initial gate bias b_g (sigmoid(-2) ~ 0.12)")
+                        help="WiFormer v4: sampling rate in Hz (default per dataset: sshar_esp = 200, ut_har = 125)")
     parser.add_argument(
         "--run_name",
         type=str,
@@ -426,10 +411,10 @@ def resolve_class_weights(spec, train_loader, num_classes):
 def get_default_train_cfg(model_name):
     """Per-model defaults for lr / batch size / optimizer."""
     model_name = model_name.lower()
-    if model_name in ("wiformer", "wiformer_v3", "wiformer_v4"):
+    if model_name in ("wiformer", "wiformer_v4"):
         # Adam, lr=1e-3 (as in common WiFi-HAR baselines). Warmup + cosine
         # are kept for the Transformer so the large initial lr stays stable.
-        # wiformer_v3: no early stopping, so the cosine schedule runs to the end
+        # No early stopping, so the cosine schedule runs to the end
         # (the checkpoint is still the best one on val).
         return {
             "lr": 1e-3,
@@ -451,7 +436,7 @@ def get_default_train_cfg(model_name):
 
 def get_default_scheduler_cfg(model_name, epochs=100, warmup_epochs=0):
     model_name = model_name.lower()
-    if model_name in ("wiformer", "wiformer_v3", "wiformer_v4"):
+    if model_name in ("wiformer", "wiformer_v4"):
         return {
             "name": "cosineannealinglr",
             "args": {
@@ -513,8 +498,8 @@ def main():
     dataset_kwargs = {}
     dataset_kwargs["case_split"] = args.case_split
     dataset_kwargs["split_mode"] = args.split_mode
-    if args.model in ("wiformer_v3", "wiformer_v4") and args.dataset.startswith("sshar") and args.v3_norm == "sub":
-        # WiFormer v3 normalises every sample itself (mean per (rx, sub), std per rx),
+    if args.model == "wiformer_v4" and args.dataset.startswith("sshar") and args.norm == "sub":
+        # WiFormer v4 normalises every sample itself (mean per (rx, sub), std per rx),
         # which cancels any global z-score -> skip the dataset's mean/std pass.
         dataset_kwargs["normalize"] = False
     if args.model == "wiformer" and args.dataset.startswith("sshar") and not args.no_sample_norm:
@@ -580,35 +565,10 @@ def main():
             dropout=args.dropout,
             sub_group=args.sub_group,
         )
-    elif args.model == "wiformer_v3":
-        model_kwargs.update(
-            ablation=args.v3_ablation,
-            fusion=args.v3_fusion,
-            k3f_layers=args.k3f_layers,
-            norm=args.v3_norm,
-            window_sec=args.window_sec,
-            fs=args.fs,
-            window=args.window,
-            stride=args.stride,
-            d_model=args.d_model,
-            feat=args.feat,
-            k1_conv=args.k1_conv,
-            k1_pool=args.k1_pool,
-            k2_layers=args.k2_layers,
-            k2_heads=args.k2_heads,
-            k2_ff=args.k2_ff,
-            k3_layers=args.k3_layers,
-            k3_heads=args.k3_heads,
-            k3_ff=args.k3_ff,
-            dropout=args.dropout,
-            mdrop=args.mdrop,
-            aux_w=args.aux_w,
-            gate_bias=args.gate_bias,
-        )
     elif args.model == "wiformer_v4":
         model_kwargs.update(
             ablation=args.v4_ablation,
-            norm=args.v3_norm,
+            norm=args.norm,
             window_sec=args.window_sec,
             fs=args.fs,
             window=args.window,
@@ -788,7 +748,7 @@ def main():
         num_classes=num_classes,
     )
 
-    # Model-specific analysis on the test set (WiFormer v3: gate per class,
+    # Model-specific analysis on the test set (WiFormer v4: view knock-out,
     # learned bias tables, RX-permutation check)
     if hasattr(model, "analyze"):
         model.analyze(test_loader, device, save_dir)

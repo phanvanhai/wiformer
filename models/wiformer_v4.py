@@ -1,9 +1,6 @@
 """
 WiFormer v4 - see WiFormer_v4_Architecture.md
 
-Block 1 as in v2 (early fusion of two views of the same segment),
-Blocks 2 - 3 as in v3 (relative biases, untied CLS). One stream, one classifier.
-
 Input (from datasets.py)
 ------------------------
 2d : (B, N_rx * N_ant * N_sub, T)     -- default loader output
@@ -46,12 +43,228 @@ import os
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .base import BaseModel
 from .wiformer import WIFORMER_DATASET_CFG
-from .wiformer_v3 import DATASET_FS, ConvExtractor, RxSubAttention, TemporalTransformer
+
+# Sampling rate (Hz) per dataset, used to turn window_sec into samples.
+# None = unknown: pass `fs` or `window` explicitly.
+DATASET_FS = {
+    "sshar_esp": 200,     # 1000 points = 5 s
+    "sshar_asus": None,
+    "xrf55": None,
+    "ut_har": 125,        # 1 kHz x 2 s = 2000 points, resampled to 250 -> 125 Hz
+}
+
 
 ABLATIONS = ("full", "wo_fft", "wo_conv", "wo_block1", "wo_block2", "wo_block3", "freq_mean")
+
+
+# ============================================================
+# Transformer encoder layer with an additive attention bias
+# ============================================================
+class BiasEncoderLayer(nn.Module):
+    """
+    Pre-LN / post-LN Transformer encoder layer whose attention takes an
+    additive float bias of shape (H, L, L), broadcast over the batch
+    (scaled_dot_product_attention does not materialise a (B*H, L, L) copy).
+    Same parameter count as nn.TransformerEncoderLayer.
+    """
+
+    def __init__(self, d_model, n_heads, dim_ff, dropout, activation="gelu", norm_first=True):
+        super().__init__()
+        if d_model % n_heads:
+            raise ValueError(f"d_model={d_model} not divisible by n_heads={n_heads}")
+        self.n_heads = n_heads
+        self.d_head = d_model // n_heads
+        self.norm_first = norm_first
+        self.attn_drop = dropout
+        self.qkv = nn.Linear(d_model, 3 * d_model)
+        self.out_proj = nn.Linear(d_model, d_model)
+        self.ff1 = nn.Linear(d_model, dim_ff)
+        self.ff2 = nn.Linear(dim_ff, d_model)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.drop1 = nn.Dropout(dropout)
+        self.drop2 = nn.Dropout(dropout)
+        self.drop_ff = nn.Dropout(dropout)
+        self.act = nn.GELU() if activation == "gelu" else nn.ReLU()
+
+    def _sa(self, x, bias):
+        N, L, D = x.shape
+        q, k, v = self.qkv(x).view(N, L, 3, self.n_heads, self.d_head).permute(2, 0, 3, 1, 4)
+        mask = None if bias is None else bias.unsqueeze(0).to(q.dtype)   # (1, H, L, L)
+        out = F.scaled_dot_product_attention(
+            q, k, v, attn_mask=mask,
+            dropout_p=self.attn_drop if self.training else 0.0,
+        )                                                                  # (N, H, L, d_head)
+        return self.drop1(self.out_proj(out.transpose(1, 2).reshape(N, L, D)))
+
+    def _ff(self, x):
+        return self.drop2(self.ff2(self.drop_ff(self.act(self.ff1(x)))))
+
+    def forward(self, x, bias=None):
+        if self.norm_first:
+            x = x + self._sa(self.norm1(x), bias)
+            x = x + self._ff(self.norm2(x))
+        else:
+            x = self.norm1(x + self._sa(x, bias))
+            x = self.norm2(x + self._ff(x))
+        return x
+
+
+def _with_cls_bias(body, cls):
+    """
+    body : (H, L, L) bias between non-CLS tokens
+    cls  : (H, 3)    [CLS->token, token->CLS, CLS->CLS]
+    -> (H, L+1, L+1) with CLS at index 0, independent of position (CLS untied).
+    """
+    H, L, _ = body.shape
+    top = torch.cat([cls[:, 2:3].unsqueeze(-1), cls[:, 0:1].unsqueeze(-1).expand(H, 1, L)], dim=2)
+    rest = torch.cat([cls[:, 1:2].unsqueeze(-1).expand(H, L, 1), body], dim=2)
+    return torch.cat([top, rest], dim=1)
+
+
+# ============================================================
+# Block 1 - Conv1d on every (rx, sub, window) segment
+# ============================================================
+class ConvExtractor(nn.Module):
+    """
+    3 x Conv1d (+ BN + GELU) -> AdaptiveAvgPool1d(n_pool) -> flatten -> Linear(feat*n_pool, D).
+    raw=True (ablation wo_block1): Linear(W, D) on the raw window.
+    """
+
+    def __init__(self, d_model, feat, window, n_conv=3, pool="flat4", raw=False):
+        super().__init__()
+        self.raw = raw
+        if raw:
+            self.proj = nn.Linear(window, d_model)
+            return
+        if n_conv not in (2, 3, 4):
+            raise ValueError(f"k1_conv must be 2, 3 or 4, got {n_conv}")
+        if pool == "avg":
+            n_pool = 1
+        elif pool.startswith("flat") and pool[4:].isdigit():
+            n_pool = int(pool[4:])
+        else:
+            raise ValueError(f"k1_pool must be avg or flatN, got '{pool}'")
+        c1 = max(32, feat // 2)
+        layers = [
+            nn.Conv1d(1, c1, kernel_size=8, stride=2, padding=3), nn.BatchNorm1d(c1), nn.GELU(),
+            nn.Conv1d(c1, feat, kernel_size=4, stride=2, padding=1), nn.BatchNorm1d(feat), nn.GELU(),
+        ]
+        for _ in range(n_conv - 2):
+            layers += [nn.Conv1d(feat, feat, kernel_size=3, padding=1), nn.BatchNorm1d(feat), nn.GELU()]
+        layers.append(nn.AdaptiveAvgPool1d(n_pool))
+        self.encoder = nn.Sequential(*layers)
+        self.proj = nn.Linear(feat * n_pool, d_model)
+
+    def forward(self, seg):
+        # seg: (N, W) -> (N, D)
+        if self.raw:
+            return self.proj(seg)
+        return self.proj(self.encoder(seg.unsqueeze(1)).flatten(1))
+
+
+# ============================================================
+# Block 2 - Rx x Sub attention per window, relative bias
+# ============================================================
+class RxSubAttention(nn.Module):
+    """
+    Tokens: the R*S (view, sub) tokens of one window + CLS. No absolute PE.
+    Bias (shared by all layers):
+        same view  : b_sub[h, |s_i - s_j|]   (S values / head, symmetric)
+        other view : c_cross[h]              (1 value / head)
+        CLS        : 3 values / head (CLS->token, token->CLS, CLS->CLS)
+    Only same/other-view relations are used -> equivariant to permuting the views.
+    pool=True (ablation wo_block2): mean over the R*S tokens.
+    """
+
+    def __init__(self, n_view, n_sub, d_model, n_heads, n_layers, dim_ff, dropout,
+                 activation="gelu", norm_first=True, pool=False):
+        super().__init__()
+        self.pool = pool
+        if pool:
+            return
+        self.n_heads = n_heads
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
+        self.sub_bias = nn.Parameter(torch.zeros(n_heads, n_sub))
+        self.cross_bias = nn.Parameter(torch.zeros(n_heads))
+        self.cls_bias = nn.Parameter(torch.zeros(n_heads, 3))
+        self.layers = nn.ModuleList([
+            BiasEncoderLayer(d_model, n_heads, dim_ff, dropout, activation, norm_first)
+            for _ in range(n_layers)
+        ])
+        view = torch.arange(n_view).repeat_interleave(n_sub)            # token -> view
+        sub = torch.arange(n_sub).repeat(n_view)                         # token -> sub
+        self.register_buffer("rel_sub", (sub[:, None] - sub[None, :]).abs(), persistent=False)
+        self.register_buffer("same_view", view[:, None] == view[None, :], persistent=False)
+
+    def bias(self):
+        H = self.n_heads
+        body = torch.where(
+            self.same_view.unsqueeze(0),
+            self.sub_bias[:, self.rel_sub],                              # (H, RS, RS)
+            self.cross_bias.view(H, 1, 1),
+        )
+        return _with_cls_bias(body, self.cls_bias)                       # (H, RS+1, RS+1)
+
+    def forward(self, x):
+        # x: (B, R, K, S, D) -> h: (B, K, D)
+        B, R, K, S, D = x.shape
+        x = x.permute(0, 2, 1, 3, 4).reshape(B * K, R * S, D)
+        if self.pool:
+            return x.mean(dim=1).reshape(B, K, D)
+        x = torch.cat([self.cls_token.expand(B * K, -1, -1), x], dim=1)
+        bias = self.bias()
+        for layer in self.layers:
+            x = layer(x, bias)
+        return x[:, 0].reshape(B, K, D)
+
+
+
+# ============================================================
+# Block 3 - temporal Transformer, signed relative bias
+# ============================================================
+class TemporalTransformer(nn.Module):
+    """
+    Window tokens + CLS. Bias (shared by all layers):
+        two windows : b[h, i - j], i - j in {-(K-1), ..., K-1}  (signed, T5 / Swin style)
+        CLS         : 3 values / head (untied from position)
+    n_layers = 0 (ablation wo_block3): mean over the windows.
+    """
+
+    def __init__(self, n_win, d_model, n_heads, n_layers, dim_ff, dropout,
+                 activation="gelu", norm_first=True):
+        super().__init__()
+        self.n_layers = n_layers
+        if n_layers == 0:
+            return
+        self.n_heads = n_heads
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
+        self.rel_bias = nn.Parameter(torch.zeros(n_heads, 2 * n_win - 1))
+        self.cls_bias = nn.Parameter(torch.zeros(n_heads, 3))
+        self.layers = nn.ModuleList([
+            BiasEncoderLayer(d_model, n_heads, dim_ff, dropout, activation, norm_first)
+            for _ in range(n_layers)
+        ])
+        pos = torch.arange(n_win)
+        self.register_buffer("rel_idx", pos[:, None] - pos[None, :] + n_win - 1, persistent=False)
+
+    def bias(self):
+        return _with_cls_bias(self.rel_bias[:, self.rel_idx], self.cls_bias)
+
+    def forward(self, x):
+        # x: (B, K, D) -> (B, D)
+        if self.n_layers == 0:
+            return x.mean(dim=1)
+        x = torch.cat([self.cls_token.expand(x.shape[0], -1, -1), x], dim=1)
+        bias = self.bias()
+        for layer in self.layers:
+            x = layer(x, bias)
+        return x[:, 0]
+
 
 
 # ============================================================

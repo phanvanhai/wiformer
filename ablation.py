@@ -24,11 +24,11 @@ python ablation.py --data_root=".\\data\\" --dataset=sshar_esp ^
 # only rebuild the summary table from finished runs
 python ablation.py --dataset=xrf55 --summary_only
 
-# WiFormer v3 core ablation (every split is 6:2:2)
+# WiFormer v4 core ablation (every split is 6:2:2)
 # result folders: <result_root>/<dataset>_<split>_<variant>, e.g. sshar_esp_repeat_full,
-#                 ut_har_official_wo_freq, sshar_esp_user_c0_full
-python ablation.py --model=wiformer_v3 --data_root=".\\data\\" --dataset=sshar_esp
-python ablation.py --model=wiformer_v3 --data_root=".\\data\\" --dataset=ut_har
+#                 ut_har_official_nonorm, sshar_esp_user_c0_full
+python ablation.py --model=wiformer_v4 --data_root=".\\data\\" --dataset=sshar_esp
+python ablation.py --model=wiformer_v4 --data_root=".\\data\\" --dataset=ut_har --variants nonorm
 """
 
 import argparse
@@ -126,34 +126,10 @@ SETS = {
     "all": list(VARIANTS),
 }
 
-# ---- WiFormer v3 (--model=wiformer_v3): core ablation, remove one block / branch ----
-# see WiFormer_v3_Architecture.md, section 15.1
-V3_VARIANTS = {
-    "full": ("Full", "WiFormer v3 (all blocks / branches)", ["--v3_ablation=full"]),
-    "wo_freq": ("Stream", "Main stream only (no speed stream)", ["--v3_ablation=wo_freq"]),
-    "wo_main": ("Stream", "Speed stream only (no Block 1 + 2)", ["--v3_ablation=wo_main"]),
-    "wo_block1": ("Block 1", "w/o Block 1 (Linear(W,D) on raw window)", ["--v3_ablation=wo_block1"]),
-    "wo_block2": ("Block 2", "w/o Block 2 (mean over Rx x Sub)", ["--v3_ablation=wo_block2"]),
-    "wo_block3": ("Block 3", "w/o Block 3 (mean over windows)", ["--v3_ablation=wo_block3"]),
-    # first v3 design (gated residual at M + one Block 3), for comparison with late fusion
-    "gate_full": ("Fusion", "Gated residual fusion at M (first v3 design)",
-                  ["--v3_ablation=full", "--v3_fusion=gate"]),
-    # UT_HAR experiment: no per-sample normalisation inside v3 -> keeps the static
-    # level of each channel (input = loader's per-sample min-max)
-    "nonorm": ("Norm", "No per-sample normalisation in the model (keep static level)",
-               ["--v3_ablation=full", "--v3_norm=none"]),
-    # nonorm + the hand-set class weights of AMCS-TCN for UT_HAR
-    # (lie_down, fall, walk, pickup, run, sit_down, stand_up)
-    "nonorm_cw": ("Norm", "nonorm + AMCS-TCN class weights (UT_HAR)",
-                  ["--v3_ablation=full", "--v3_norm=none", "--class_weights=1,1,0.8,1,0.8,1.5,2"]),
-}
-V3_CORE = ["full", "wo_freq", "wo_main", "wo_block1", "wo_block2", "wo_block3"]
-V3_SETS = {"core": V3_CORE, "all": list(V3_VARIANTS)}
-
-# ---- WiFormer v4 (--model=wiformer_v4): Block 1 of v2 (early fusion), Blocks 2-3 of v3 ----
+# ---- WiFormer v4 (--model=wiformer_v4): core ablation ----
 # see WiFormer_v4_Architecture.md, section 6
 V4_VARIANTS = {
-    "full": ("Full", "WiFormer v4 (token = [Conv || FFT], Blocks 2-3 of v3)", ["--v4_ablation=full"]),
+    "full": ("Full", "WiFormer v4 (token = [Conv || FFT], relative-bias Blocks 2-3)", ["--v4_ablation=full"]),
     "wo_fft": ("Block 1", "Block 1 = time view only (Conv)", ["--v4_ablation=wo_fft"]),
     "wo_conv": ("Block 1", "Block 1 = spectral view only (FFT)", ["--v4_ablation=wo_conv"]),
     "wo_block1": ("Block 1", "w/o Block 1 (Linear(W,D) on raw window)", ["--v4_ablation=wo_block1"]),
@@ -164,7 +140,7 @@ V4_VARIANTS = {
                   ["--v4_ablation=freq_mean"]),
     # UT_HAR: no per-sample normalisation inside the model (keep the static level)
     "nonorm": ("Norm", "No per-sample normalisation in the model (keep static level)",
-               ["--v4_ablation=full", "--v3_norm=none"]),
+               ["--v4_ablation=full", "--norm=none"]),
 }
 V4_CORE = ["full", "wo_fft", "wo_conv", "wo_block1", "wo_block2", "wo_block3"]
 V4_SETS = {"core": V4_CORE, "all": list(V4_VARIANTS)}
@@ -172,8 +148,6 @@ V4_SETS = {"core": V4_CORE, "all": list(V4_VARIANTS)}
 
 def tables(model):
     """(variants, sets) of the given model."""
-    if model == "wiformer_v3":
-        return V3_VARIANTS, V3_SETS
     if model == "wiformer_v4":
         return V4_VARIANTS, V4_SETS
     return VARIANTS, SETS
@@ -189,9 +163,9 @@ def parse_args():
     p.add_argument("--dataset", type=str, default=None,
                    choices=["ut_har", "xrf55", "sshar_esp", "sshar_asus"])
     p.add_argument("--data_root", type=str, default=None)
-    p.add_argument("--model", type=str, default="wiformer", choices=["wiformer", "wiformer_v3", "wiformer_v4"])
+    p.add_argument("--model", type=str, default="wiformer", choices=["wiformer", "wiformer_v4"])
     p.add_argument("--result_root", type=str, default=None,
-                   help="default: results/ablation (wiformer), results/ablation_<v3|v4> (wiformer_v3 / v4)")
+                   help="default: results/ablation (wiformer), results/ablation_v4 (wiformer_v4)")
     p.add_argument("--set", type=str, default="core", choices=list(SETS),
                    help="core = remove one block at a time (default), "
                         "design = design choices inside blocks, "
@@ -222,7 +196,7 @@ def split_label(args):
 
 
 def folder_name(args, name):
-    """<dataset>_<split>_<variant> (v2, v3, v4)."""
+    """<dataset>_<split>_<variant>."""
     return f"{args.dataset}_{split_label(args)}_{name}"
 
 
@@ -324,15 +298,13 @@ def summarize(args, names, tag):
 def main():
     args = parse_args()
     if args.result_root is None:
-        args.result_root = {"wiformer_v3": "results/ablation_v3",
-                            "wiformer_v4": "results/ablation_v4"}.get(args.model, "results/ablation")
+        args.result_root = {"wiformer_v4": "results/ablation_v4"}.get(args.model, "results/ablation")
     if args.split_mode is None:
         args.split_mode = "repeat"
     variants, sets = tables(args.model)
 
     if args.list:
-        groups = ((("v3 core (remove one block / branch)", V3_VARIANTS),) if args.model == "wiformer_v3" else
-                  (("v4 core (Block 1 views / remove one block)", V4_VARIANTS),) if args.model == "wiformer_v4" else
+        groups = ((("v4 core (Block 1 views / remove one block)", V4_VARIANTS),) if args.model == "wiformer_v4" else
                   (("core (remove one block at a time)", CORE_VARIANTS),
                    ("design (choices inside blocks)", DESIGN_VARIANTS),
                    ("scale (bigger blocks)", SCALE_VARIANTS),
