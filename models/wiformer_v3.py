@@ -332,6 +332,7 @@ class WiFormerV3(BaseModel):
         ablation="full",
         fusion="late",
         k3f_layers=2,
+        norm="sub",
         **kwargs,
     ):
         super().__init__(input_shape=input_shape, num_classes=num_classes)
@@ -339,8 +340,11 @@ class WiFormerV3(BaseModel):
             raise ValueError(f"WiFormerV3: ablation must be one of {ABLATIONS}, got '{ablation}'")
         if fusion not in FUSIONS:
             raise ValueError(f"WiFormerV3: fusion must be one of {FUSIONS}, got '{fusion}'")
+        if norm not in ("sub", "none"):
+            raise ValueError(f"WiFormerV3: norm must be 'sub' or 'none', got '{norm}'")
         self.ablation = ablation
         self.fusion = fusion
+        self.norm = norm
 
         name = (dataset or "").lower()
         cfg = dict(WIFORMER_DATASET_CFG.get(name, {}))
@@ -373,7 +377,7 @@ class WiFormerV3(BaseModel):
         self.n_win = (T - window) // stride + 1
         dur = f"{window / self.fs:.3f} s" if self.fs else "fs unknown"
         print(f"[WiFormerV3] window W={window} ({dur}), stride={stride}, n_win={self.n_win}, "
-              f"fusion={fusion}, ablation={ablation}")
+              f"fusion={fusion}, norm={norm}, ablation={ablation}")
 
         k2_ff = k2_ff or 4 * d_model
         k3_ff = k3_ff or 4 * d_model
@@ -456,6 +460,10 @@ class WiFormerV3(BaseModel):
         # (B, C, T) / (B, R*A, S, T) / (B, R, A, S, T) -> (B, R, S, T)
         B, T = x.shape[0], x.shape[-1]
         x = x.reshape(B, self.n_rx, self.n_ant, self.n_sub, T)[:, :, 0]
+        if self.norm == "none":
+            # keep the input as given by the loader (UT_HAR: per-sample min-max),
+            # i.e. keep the static level of every (rx, sub) channel
+            return x
         x = x - x.mean(dim=-1, keepdim=True)                              # static level per (rx, sub)
         std = x.flatten(2).std(dim=-1).view(B, self.n_rx, 1, 1) + 1e-6    # one std per (sample, rx)
         return x / std

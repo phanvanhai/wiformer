@@ -349,6 +349,10 @@ def parse_args():
     parser.add_argument("--v3_fusion", type=str, default="late", choices=["late", "gate"],
                         help="WiFormer v3 fusion: late = two streams, per-class late fusion of logits (option C); "
                              "gate = gated residual at M (first v3 design)")
+    parser.add_argument("--v3_norm", type=str, default="sub", choices=["sub", "none"],
+                        help="WiFormer v3 per-sample normalisation: sub = minus mean per (rx, sub), / std per rx "
+                             "(default); none = keep the loader's input (UT_HAR: per-sample min-max), "
+                             "i.e. keep the static level of each channel")
     parser.add_argument("--k3f_layers", type=int, default=2,
                         help="WiFormer v3 (late fusion): layers of the Block 3 of the speed stream")
     parser.add_argument("--window_sec", type=float, default=0.3,
@@ -487,7 +491,7 @@ def main():
     dataset_kwargs = {}
     dataset_kwargs["case_split"] = args.case_split
     dataset_kwargs["split_mode"] = args.split_mode
-    if args.model == "wiformer_v3" and args.dataset.startswith("sshar"):
+    if args.model == "wiformer_v3" and args.dataset.startswith("sshar") and args.v3_norm == "sub":
         # WiFormer v3 normalises every sample itself (mean per (rx, sub), std per rx),
         # which cancels any global z-score -> skip the dataset's mean/std pass.
         dataset_kwargs["normalize"] = False
@@ -555,6 +559,7 @@ def main():
             ablation=args.v3_ablation,
             fusion=args.v3_fusion,
             k3f_layers=args.k3f_layers,
+            norm=args.v3_norm,
             window_sec=args.window_sec,
             fs=args.fs,
             window=args.window,

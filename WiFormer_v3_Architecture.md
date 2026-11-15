@@ -686,6 +686,20 @@ Trên UT-HAR, 3 "view" là 3 anten của cùng một card, đặt cách nhau kho
 
 UT-HAR cũng có các cặp mà v3 nhắm tới: đi / chạy, ngồi xuống / đứng lên. Thứ tự nhãn của UT-HAR cần xác minh trước khi phân tích lỗi theo cặp.
 
+### 16.3b Profile tĩnh mang nhiều thông tin trên UT-HAR (kiểm chứng 2026-11-15)
+
+Logistic regression trên đặc trưng đơn giản của mỗi mẫu (90 kênh), dữ liệu `data/UT_HAR`:
+
+| Đặc trưng | Val | Test |
+|---|---|---|
+| Profile tĩnh: mean theo thời gian của từng kênh (sau min-max theo mẫu) | 85.1% | **83.8%** |
+| Profile tĩnh trên dữ liệu thô | 84.1% | 81.8% |
+| Mức dao động: std theo thời gian của từng kênh | 63.5% | 61.8% |
+| Cả hai | 89.5% | 87.8% |
+| *v3 `full` với chuẩn hóa `sub` (chỉ thấy phần dao động)* | *78.8%* | *74.4%* |
+
+Chuẩn hóa `sub` của v3 trừ mean theo từng (rx, sub), nên xóa đúng profile tĩnh, vốn là manh mối mạnh nhất trên UT-HAR (mẫu 2 s, cùng môi trường; mức tĩnh phản ánh tư thế). Thí nghiệm riêng cho UT-HAR: biến thể `nonorm` (`--v3_norm=none`) giữ nguyên kiến trúc, chỉ bỏ chuẩn hóa theo mẫu trong mô hình, đầu vào là min-max theo mẫu của loader. Luồng tần số không đổi (mức tĩnh chỉ rơi vào bin DC, vốn bị bỏ). SSHAR-ESP giữ `sub`.
+
 ### 16.4 Vấn đề mở cho UT-HAR
 
 - **Bias cho cặp khác view ở Khối 2:** với anten của cùng card, có thể dùng một bảng riêng theo |Δsub| cho cặp khác view (`b_h^cross[|Δs|]`) thay cho một scalar. Tạm thời giữ thiết kế chung (scalar) cho cả hai dataset; xem xét lại sau khi có kết quả UT-HAR.

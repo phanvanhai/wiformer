@@ -138,6 +138,10 @@ V3_VARIANTS = {
     # first v3 design (gated residual at M + one Block 3), for comparison with late fusion
     "gate_full": ("Fusion", "Gated residual fusion at M (first v3 design)",
                   ["--v3_ablation=full", "--v3_fusion=gate"]),
+    # UT_HAR experiment: no per-sample normalisation inside v3 -> keeps the static
+    # level of each channel (input = loader's per-sample min-max)
+    "nonorm": ("Norm", "No per-sample normalisation in the model (keep static level)",
+               ["--v3_ablation=full", "--v3_norm=none"]),
 }
 V3_CORE = ["full", "wo_freq", "wo_main", "wo_block1", "wo_block2", "wo_block3"]
 V3_SETS = {"core": V3_CORE, "all": list(V3_VARIANTS)}

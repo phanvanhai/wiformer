@@ -24,6 +24,8 @@
 #   wo_block2  Khối 2 = trung bình các token Rx x Sub (bỏ attention)
 #   wo_block3  Khối 3 = trung bình qua các window (bỏ Transformer thời gian)
 #   gate_full  thiết kế đầu tiên: cổng dư ở M + 1 Khối 3 (để so sánh)
+#   nonorm     full nhưng KHÔNG chuẩn hoá theo mẫu trong mô hình (giữ mức tĩnh từng kênh)
+#              -> thí nghiệm riêng cho UT_HAR: DATASET='ut_har', VARIANTS=['nonorm']
 #
 # VARIANTS (wiformer v2, MODEL = 'wiformer'; python ablation.py --list)
 #   core  : full wo_fft wo_conv wo_block1 wo_block2 wo_block3
@@ -43,6 +45,8 @@
 #     --fs=200                tần số lấy mẫu (mặc định sshar_esp 200 Hz, ut_har 125 Hz)
 #   Kiến trúc (v3)
 #     --v3_fusion=late|gate   late = gộp muộn theo lớp (mặc định), gate = cổng dư ở M
+#     --v3_norm=sub|none      sub = trừ mean theo (rx, sub), chia std theo rx (mặc định);
+#                             none = không chuẩn hoá trong mô hình (biến thể nonorm)
 #     --k3_layers=6           số lớp Khối 3 của luồng thời gian
 #     --k3f_layers=2          số lớp Khối 3 của luồng tốc độ (vd 4/4: --k3_layers=4 --k3f_layers=4)
 #     --k2_layers=2           số lớp Khối 2
