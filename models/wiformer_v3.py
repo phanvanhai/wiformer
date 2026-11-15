@@ -18,19 +18,24 @@ main branch : Block 1 Conv1d per (rx, sub, window)                     (B, R, K,
 aux branch  : rfft per (rx, sub, window) -> log1p|X| -> drop DC
               -> mean over S -> shared MLP per view -> [mean_R || max_R]
                                                                        f (B, K, D)
-fusion (M)  : x_k = h_k + g_k * P(f_k),  g_k = sigmoid(W_g h_k + b_g)
-              P zero-init, modality dropout on P(f) (training only)
+fusion = "late" (default, option C): two streams, late fusion of logits per class
+    main stream : h -> Block 3 (k3_layers)  -> classifier -> z_main
+    freq stream : f -> Block 3' (k3f_layers) -> classifier -> z_freq
+    z = w_c * z_main + (1 - w_c) * z_freq,  w_c = sigmoid(a_c), one a_c per class (init 0.5)
+    loss = CE(z) + aux_w * [CE(z_main) + CE(z_freq)]
+fusion = "gate" (first v3 design): fusion at M, then one Block 3
+    x_k = h_k + g_k * P(f_k),  g_k = sigmoid(W_g h_k + b_g)
+    P zero-init, modality dropout on P(f), aux head on mean_k h_k
 Block 3     : temporal Transformer, signed relative bias b[i - j], CLS untied
 classifier  : LayerNorm -> Dropout -> Linear
-aux head    : LayerNorm -> Linear on mean_k h_k (training loss only)
 
 Window: W = floor(window_sec * fs) samples, made even (default 0.3 s), stride W // 2,
 unless `window` (samples) is given explicitly.
 
 Core ablation (`ablation`):
     full      - everything
-    wo_freq   - no aux branch / gate:            x_k = h_k
-    wo_main   - no Block 1 / Block 2 / gate / aux head:  x_k = P(f_k)
+    wo_freq   - main stream only   (gate: x_k = h_k)
+    wo_main   - freq stream only   (gate: x_k = P(f_k))
     wo_block1 - Block 1 = Linear(W, D) on the raw window
     wo_block2 - Block 2 = mean over the R*S tokens of a window
     wo_block3 - Block 3 = mean over the windows
@@ -58,6 +63,7 @@ DATASET_FS = {
 }
 
 ABLATIONS = ("full", "wo_freq", "wo_main", "wo_block1", "wo_block2", "wo_block3")
+FUSIONS = ("late", "gate")
 
 
 # ============================================================
@@ -324,12 +330,17 @@ class WiFormerV3(BaseModel):
         aux_w=0.3,
         gate_bias=-2.0,
         ablation="full",
+        fusion="late",
+        k3f_layers=2,
         **kwargs,
     ):
         super().__init__(input_shape=input_shape, num_classes=num_classes)
         if ablation not in ABLATIONS:
             raise ValueError(f"WiFormerV3: ablation must be one of {ABLATIONS}, got '{ablation}'")
+        if fusion not in FUSIONS:
+            raise ValueError(f"WiFormerV3: fusion must be one of {FUSIONS}, got '{fusion}'")
         self.ablation = ablation
+        self.fusion = fusion
 
         name = (dataset or "").lower()
         cfg = dict(WIFORMER_DATASET_CFG.get(name, {}))
@@ -361,16 +372,22 @@ class WiFormerV3(BaseModel):
         self.window, self.stride = window, stride
         self.n_win = (T - window) // stride + 1
         dur = f"{window / self.fs:.3f} s" if self.fs else "fs unknown"
-        print(f"[WiFormerV3] window W={window} ({dur}), stride={stride}, n_win={self.n_win}, ablation={ablation}")
+        print(f"[WiFormerV3] window W={window} ({dur}), stride={stride}, n_win={self.n_win}, "
+              f"fusion={fusion}, ablation={ablation}")
 
         k2_ff = k2_ff or 4 * d_model
         k3_ff = k3_ff or 4 * d_model
         R, S = self.n_rx, self.n_sub
         self.use_main = ablation != "wo_main"
         self.use_freq = ablation != "wo_freq"
-        self.use_gate = self.use_main and self.use_freq
-        self.aux_w = aux_w if self.use_main else 0.0
+        self.two_streams = self.use_main and self.use_freq
+        late = fusion == "late"
+        self.use_gate = self.two_streams and not late
+        # late: deep supervision on both streams; gate: aux head on the main branch
+        self.aux_w = aux_w if (self.two_streams if late else self.use_main) else 0.0
         self.mdrop = mdrop
+        n_layers3 = 0 if ablation == "wo_block3" else k3_layers
+        n_layers3f = 0 if ablation == "wo_block3" else k3f_layers
 
         # ---- main branch ----
         if self.use_main:
@@ -379,22 +396,38 @@ class WiFormerV3(BaseModel):
                 R, S, d_model, k2_heads, k2_layers, k2_ff, dropout, activation, norm_first,
                 pool=ablation == "wo_block2",
             )
-        # ---- aux branch + fusion ----
         if self.use_freq:
             self.speed = SpeedSpectrum(window, d_model)
-            self.proj_f = nn.Linear(d_model, d_model)                     # P
-        if self.use_gate:
-            self.gate = nn.Linear(d_model, d_model)                       # W_g, b_g
-        # ---- Block 3 + heads ----
-        self.block3 = TemporalTransformer(
-            self.n_win, d_model, k3_heads, 0 if ablation == "wo_block3" else k3_layers,
-            k3_ff, dropout, activation, norm_first,
-        )
-        self.classifier = nn.Sequential(nn.LayerNorm(d_model), nn.Dropout(dropout), nn.Linear(d_model, num_classes))
-        if self.aux_w > 0:
-            self.aux_head = nn.Sequential(nn.LayerNorm(d_model), nn.Linear(d_model, num_classes))
 
-        self._aux_logits = None
+        def head():
+            return nn.Sequential(nn.LayerNorm(d_model), nn.Dropout(dropout), nn.Linear(d_model, num_classes))
+
+        if late:
+            # ---- option C: one Block 3 + classifier per stream, per-class late fusion ----
+            if self.use_main:
+                self.block3 = TemporalTransformer(self.n_win, d_model, k3_heads, n_layers3,
+                                                  k3_ff, dropout, activation, norm_first)
+                self.classifier = head()
+            if self.use_freq:
+                self.block3f = TemporalTransformer(self.n_win, d_model, k3_heads, n_layers3f,
+                                                   k3_ff, dropout, activation, norm_first)
+                self.classifier_f = head()
+            if self.two_streams:
+                self.branch_logit = nn.Parameter(torch.zeros(num_classes))   # w_c = sigmoid(a_c) = 0.5
+        else:
+            # ---- first v3 design: gated residual at M, one Block 3 ----
+            if self.use_freq:
+                self.proj_f = nn.Linear(d_model, d_model)                     # P
+            if self.use_gate:
+                self.gate = nn.Linear(d_model, d_model)                       # W_g, b_g
+            self.block3 = TemporalTransformer(self.n_win, d_model, k3_heads, n_layers3,
+                                              k3_ff, dropout, activation, norm_first)
+            self.classifier = head()
+            if self.aux_w > 0:
+                self.aux_head = nn.Sequential(nn.LayerNorm(d_model), nn.Linear(d_model, num_classes))
+
+        self._aux_logits = None        # gate: aux head logits (training)
+        self._stream_logits = None     # late: (z_main, z_freq)
         self._last_gate = None
         self._init_weights(gate_bias)
 
@@ -409,7 +442,7 @@ class WiFormerV3(BaseModel):
                 nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
-        for blk in (getattr(self, "block2", None), self.block3):
+        for blk in (getattr(self, "block2", None), getattr(self, "block3", None), getattr(self, "block3f", None)):
             if blk is not None and hasattr(blk, "cls_token"):
                 nn.init.trunc_normal_(blk.cls_token, std=0.02)
         if self.use_gate:
@@ -438,6 +471,16 @@ class WiFormerV3(BaseModel):
             v = self.block1(seg.permute(0, 1, 3, 2, 4).reshape(-1, self.window))
             h = self.block2(v.reshape(B, R, K, S, -1))                     # (B, K, D)
 
+        if self.fusion == "late":
+            z_main = self.classifier(self.block3(h)) if self.use_main else None
+            z_freq = self.classifier_f(self.block3f(self.speed(seg))) if self.use_freq else None
+            if not self.two_streams:
+                self._stream_logits = None
+                return z_main if z_main is not None else z_freq
+            self._stream_logits = (z_main, z_freq)
+            w = torch.sigmoid(self.branch_logit)                           # (C,) weight of the main stream
+            return w * z_main + (1.0 - w) * z_freq
+
         if self.use_freq:
             pf = self.proj_f(self.speed(seg))                              # (B, K, D)
             if self.use_gate:
@@ -461,7 +504,18 @@ class WiFormerV3(BaseModel):
         return self.classifier(self.block3(tokens))
 
     def extra_loss(self, y):
-        """Auxiliary CE on the main branch (training only). Called by train.py."""
+        """
+        Auxiliary loss (training only), called by train.py after the main CE:
+        late : aux_w * [CE(z_main) + CE(z_freq)]  (each stream must classify on its own)
+        gate : aux_w * CE(aux head on the main branch)
+        """
+        if not self.training or self.aux_w <= 0:
+            return None
+        if self.fusion == "late":
+            if self._stream_logits is None:
+                return None
+            z_main, z_freq = self._stream_logits
+            return self.aux_w * (F.cross_entropy(z_main, y) + F.cross_entropy(z_freq, y))
         if self._aux_logits is None:
             return None
         return self.aux_w * F.cross_entropy(self._aux_logits, y)
@@ -471,8 +525,10 @@ class WiFormerV3(BaseModel):
     def analyze(self, loader, device, save_dir):
         """
         After training (best checkpoint), on the test loader:
-        - gate_by_class.csv  : mean gate g per true class (full model only)
-        - block2_bias.json / block3_bias.json : learned relative bias tables
+        - stream_by_class.csv (late, two streams): per true class, the main-stream
+          weight w_c and the recall of z_main / z_freq / fused z
+        - gate_by_class.csv  (gate, full model): mean gate g per true class
+        - block2_bias.json / block3_bias.json / block3f_bias.json : learned bias tables
         - rx_permutation.json: prediction agreement when the views are permuted
         """
         self.eval()
@@ -480,10 +536,20 @@ class WiFormerV3(BaseModel):
         R = self.n_rx
         perm = list(range(1, R)) + [0]                                    # cyclic shift of the views
         gate_sum, gate_cnt = {}, {}
+        hit = {}                                                          # class -> [n, main, freq, fused]
         n, agree, max_diff = 0, 0, 0.0
         for x, y in loader:
             x, y = x.to(device), y.to(device)
             logits = self(x)
+            if self._stream_logits is not None:
+                z_main, z_freq = self._stream_logits
+                for c in y.unique().tolist():
+                    m = y == c
+                    s = hit.setdefault(c, [0, 0, 0, 0])
+                    s[0] += m.sum().item()
+                    s[1] += (z_main[m].argmax(1) == c).sum().item()
+                    s[2] += (z_freq[m].argmax(1) == c).sum().item()
+                    s[3] += (logits[m].argmax(1) == c).sum().item()
             if self._last_gate is not None and self.use_gate:
                 g = self._last_gate.mean(dim=(1, 2))
                 for c in y.unique().tolist():
@@ -496,6 +562,17 @@ class WiFormerV3(BaseModel):
             max_diff = max(max_diff, (logits - logits_p).abs().max().item())
             n += y.numel()
 
+        if hit:
+            w = torch.sigmoid(self.branch_logit).tolist()
+            with open(os.path.join(save_dir, "stream_by_class.csv"), "w", encoding="utf-8") as fh:
+                fh.write("class,w_main,w_freq,recall_main,recall_freq,recall_fused,n\n")
+                for c in sorted(hit):
+                    k, a, b, f = hit[c]
+                    fh.write(f"{c},{w[c]:.4f},{1 - w[c]:.4f},{a / k:.4f},{b / k:.4f},{f / k:.4f},{k}\n")
+                tot = [sum(v[i] for v in hit.values()) for i in range(4)]
+                fh.write(f"all,,,{tot[1] / tot[0]:.4f},{tot[2] / tot[0]:.4f},{tot[3] / tot[0]:.4f},{tot[0]}\n")
+            print(f"[WiFormerV3] test acc  main stream {tot[1] / tot[0]:.4f} | "
+                  f"freq stream {tot[2] / tot[0]:.4f} | fused {tot[3] / tot[0]:.4f}")
         if gate_cnt:
             with open(os.path.join(save_dir, "gate_by_class.csv"), "w", encoding="utf-8") as fh:
                 fh.write("class,mean_gate,n\n")
@@ -510,9 +587,11 @@ class WiFormerV3(BaseModel):
                 json.dump({"sub_bias[h][|ds|]": b2.sub_bias.tolist(),
                            "cross_bias[h]": b2.cross_bias.tolist(),
                            "cls_bias[h][cls->tok, tok->cls, cls->cls]": b2.cls_bias.tolist()}, fh, indent=2)
-        if self.block3.n_layers > 0:
-            b3 = self.block3
-            with open(os.path.join(save_dir, "block3_bias.json"), "w", encoding="utf-8") as fh:
+        for attr, fname in (("block3", "block3_bias.json"), ("block3f", "block3f_bias.json")):
+            b3 = getattr(self, attr, None)
+            if b3 is None or b3.n_layers == 0:
+                continue
+            with open(os.path.join(save_dir, fname), "w", encoding="utf-8") as fh:
                 json.dump({"offsets(i-j)": list(range(-(self.n_win - 1), self.n_win)),
                            "rel_bias[h][offset]": b3.rel_bias.tolist(),
                            "cls_bias[h][cls->win, win->cls, cls->cls]": b3.cls_bias.tolist()}, fh, indent=2)

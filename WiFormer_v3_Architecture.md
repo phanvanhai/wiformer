@@ -689,6 +689,38 @@ UT-HAR cũng có các cặp mà v3 nhắm tới: đi / chạy, ngồi xuống / 
 - **Bias cho cặp khác view ở Khối 2:** với anten của cùng card, có thể dùng một bảng riêng theo |Δsub| cho cặp khác view (`b_h^cross[|Δs|]`) thay cho một scalar. Tạm thời giữ thiết kế chung (scalar) cho cả hai dataset; xem xét lại sau khi có kết quả UT-HAR.
 - **Tần số lấy mẫu của UT-HAR:** 125 Hz (bản gốc 1 kHz × 2 s, resample 2000 → 250 điểm), đã đặt mặc định trong code. Dải phổ chỉ tới 62.5 Hz, thấp hơn SSHAR-ESP (100 Hz), nên Doppler của chạy (khoảng 40–50 Hz) vẫn nằm trong dải nhưng sát biên hơn.
 
-## 17. Ngoài phạm vi v3
+## 17. Cập nhật sau đợt chạy đầu: đổi sang gộp muộn theo lớp (phương án C)
+
+### 17.1 Kết quả đợt đầu (SSHAR-ESP, `repeat622`, seed 42, thiết kế cổng ở M)
+
+| Lỗi theo cặp (test 1280 mẫu) | `full` (cổng ở M) | `wo_freq` (chỉ nhánh thời gian) | `wo_main` (chỉ nhánh tốc độ + Khối 3) |
+|---|---|---|---|
+| 5 đi ↔ 6 chạy | 26 | 26 | **11** |
+| 4 nằm im ↔ 7 phòng trống | **11** | 17 | 37 |
+| Nội bộ 0/1/2 | 17 | 21 | **12** |
+| Test acc | 95.55% | 94.61% | 95.08% (10.8M MACs) |
+
+- Lỗi đi↔chạy của `full` bằng hệt `wo_freq`: nhánh tốc độ bị bỏ qua đúng ở cặp nó được thiết kế để giải quyết. Giá trị cổng không phân hóa theo lớp (đi 0.37, chạy 0.34, ngồi xuống 0.45).
+- Hai nhánh **bổ sung nhau theo cặp lớp**: nhánh tốc độ tốt hơn ở 2/3 cặp, nhánh thời gian chỉ thắng ở nằm im / phòng trống. Giả định "thời gian là chính, tần số là thứ cấp" (mục 3, 7, 8) **sai với dữ liệu**; các ràng buộc thứ cấp đã ép mô hình theo giả định sai đó.
+- Lập luận ở mục 2 cần sửa: phổ trong **một** window bất biến với đảo thời gian, nhưng **chuỗi** phổ qua Khối 3 (bias có dấu) phân biệt được chiều diễn biến, nên `wo_main` vẫn tách tốt 0/1/2.
+- Bảng bias Khối 3 học được bất đối xứng rõ (\|b[+d] − b[−d]\| trung bình 0.4–0.8), xác nhận mô hình dùng thông tin chiều thời gian (mục 11).
+
+### 17.2 Thiết kế mới (mặc định, `--v3_fusion=late`)
+
+```
+nhánh thời gian : Khối 1 → Khối 2 → h → Khối 3 (6 lớp)  → classifier → z_main
+nhánh tốc độ    : phổ tốc độ f       → Khối 3' (2 lớp)  → classifier → z_freq
+gộp theo lớp    : z = w_c · z_main + (1 − w_c) · z_freq,   w_c = σ(a_c), a_c khởi tạo 0 (w_c = 0.5)
+loss            : CE(z) + 0.3 · [CE(z_main) + CE(z_freq)]
+```
+
+- **Hai luồng ngang hàng**, mỗi luồng phải tự phân loại được (deep supervision trên cả hai). Bỏ zero-init, modality dropout và cổng ở M.
+- **Trọng số theo từng lớp `w_c`** cho phép mỗi lớp tự chọn mức tin vào từng luồng; đây là dạng diễn giải được thay cho bảng cổng theo lớp. `stream_by_class.csv` lưu `w_c` và recall của từng luồng / bản gộp theo lớp.
+- Khối 3' của luồng tốc độ dùng 2 lớp (`--k3f_layers`), cùng kiểu bias có dấu và CLS tách vị trí.
+- Chi phí: 554,168 tham số trên SSHAR-ESP (+92K, +20% so với thiết kế cổng), MACs tăng không đáng kể (luồng tốc độ khoảng 4M).
+- **Huấn luyện:** Adam, lr đỉnh 1e-3, warmup 5 epoch rồi cosine về 0 ở epoch 100, **không dừng sớm** (`patience = 0`), checkpoint chọn theo val acc cao nhất. Lý do: lịch cosine giả định chạy hết số epoch; đợt đầu dừng sớm ở epoch 47 khi lr còn khoảng 6e-4 nên mô hình chưa tới giai đoạn lr nhỏ. Việc chọn checkpoint theo val đã tránh được tác hại của overfit.
+- Thiết kế cổng ở M vẫn giữ được qua `--v3_fusion=gate` (biến thể `gate_full` trong `ablation.py`). Kết quả đợt đầu trong `results/v3/` là của thiết kế cổng.
+
+## 18. Ngoài phạm vi v3
 
 - **Chọn / đánh trọng số subcarrier** (trọng số theo variance, attention pooling theo subcarrier): v3 cố ý dùng trung bình đều và chấp nhận việc subcarrier "không nhạy" làm loãng phổ. Vấn đề này dành cho một nghiên cứu riêng.

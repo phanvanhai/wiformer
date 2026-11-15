@@ -122,8 +122,9 @@ def parse_args():
     parser.add_argument(
         "--patience",
         type=int,
-        default=10,
-        help="Early stopping: stop after N epochs without val-acc improvement (0 = off)",
+        default=None,
+        help="Early stopping: stop after N epochs without val-acc improvement (0 = off). "
+             "Default: 0 for wiformer_v3 (full cosine schedule), 10 for the other models",
     )
 
     parser.add_argument(
@@ -336,6 +337,11 @@ def parse_args():
     parser.add_argument("--v3_ablation", type=str, default="full",
                         choices=["full", "wo_freq", "wo_main", "wo_block1", "wo_block2", "wo_block3"],
                         help="WiFormer v3 core ablation (remove one block / branch)")
+    parser.add_argument("--v3_fusion", type=str, default="late", choices=["late", "gate"],
+                        help="WiFormer v3 fusion: late = two streams, per-class late fusion of logits (option C); "
+                             "gate = gated residual at M (first v3 design)")
+    parser.add_argument("--k3f_layers", type=int, default=2,
+                        help="WiFormer v3 (late fusion): layers of the Block 3 of the speed stream")
     parser.add_argument("--window_sec", type=float, default=0.3,
                         help="WiFormer v3: window length in seconds (W = floor(window_sec * fs), even)")
     parser.add_argument("--fs", type=float, default=None,
@@ -387,12 +393,15 @@ def get_default_train_cfg(model_name):
     if model_name in ("wiformer", "wiformer_v3"):
         # Adam, lr=1e-3 (as in common WiFi-HAR baselines). Warmup + cosine
         # are kept for the Transformer so the large initial lr stays stable.
+        # wiformer_v3: no early stopping, so the cosine schedule runs to the end
+        # (the checkpoint is still the best one on val).
         return {
             "lr": 1e-3,
             "batch_size": 32,
             "optimizer": "adam",
             "weight_decay": 0.0,
             "warmup_epochs": 5,
+            "patience": 0 if model_name == "wiformer_v3" else 10,
         }
     return {
         "lr": 1e-3,
@@ -400,6 +409,7 @@ def get_default_train_cfg(model_name):
         "optimizer": "adam",
         "weight_decay": 0.0,
         "warmup_epochs": 0,
+        "patience": 10,
     }
 
 
@@ -529,6 +539,8 @@ def main():
     elif args.model == "wiformer_v3":
         model_kwargs.update(
             ablation=args.v3_ablation,
+            fusion=args.v3_fusion,
+            k3f_layers=args.k3f_layers,
             window_sec=args.window_sec,
             fs=args.fs,
             window=args.window,

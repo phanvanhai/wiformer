@@ -130,13 +130,17 @@ SETS = {
 # see WiFormer_v3_Architecture.md, section 15.1
 V3_VARIANTS = {
     "full": ("Full", "WiFormer v3 (all blocks / branches)", ["--v3_ablation=full"]),
-    "wo_freq": ("Aux", "w/o speed branch (x_k = h_k)", ["--v3_ablation=wo_freq"]),
-    "wo_main": ("Main", "w/o main branch: Block 1 + 2 (x_k = P(f_k))", ["--v3_ablation=wo_main"]),
+    "wo_freq": ("Stream", "Main stream only (no speed stream)", ["--v3_ablation=wo_freq"]),
+    "wo_main": ("Stream", "Speed stream only (no Block 1 + 2)", ["--v3_ablation=wo_main"]),
     "wo_block1": ("Block 1", "w/o Block 1 (Linear(W,D) on raw window)", ["--v3_ablation=wo_block1"]),
     "wo_block2": ("Block 2", "w/o Block 2 (mean over Rx x Sub)", ["--v3_ablation=wo_block2"]),
     "wo_block3": ("Block 3", "w/o Block 3 (mean over windows)", ["--v3_ablation=wo_block3"]),
+    # first v3 design (gated residual at M + one Block 3), for comparison with late fusion
+    "gate_full": ("Fusion", "Gated residual fusion at M (first v3 design)",
+                  ["--v3_ablation=full", "--v3_fusion=gate"]),
 }
-V3_SETS = {"core": list(V3_VARIANTS), "all": list(V3_VARIANTS)}
+V3_CORE = ["full", "wo_freq", "wo_main", "wo_block1", "wo_block2", "wo_block3"]
+V3_SETS = {"core": V3_CORE, "all": list(V3_VARIANTS)}
 
 
 def tables(model):
