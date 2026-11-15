@@ -322,7 +322,7 @@ def parse_args():
     parser.add_argument(
         "--no_sample_norm",
         action="store_true",
-        help="WiFormer: disable per-sample z-score",
+        help="WiFormer v2: disable per-sample normalisation (v4 style: mean per (rx, sub), std per rx); the loader global z-score is used instead",
     )
     # ---- WiFormer capacity (defaults: 3 Conv1d + flat4, Block 2 2 layers, Block 3 6 layers) ----
     parser.add_argument("--d_model", type=int, default=64, help="WiFormer: token dim D (all blocks)")
@@ -436,7 +436,7 @@ def get_default_train_cfg(model_name):
             "optimizer": "adam",
             "weight_decay": 0.0,
             "warmup_epochs": 5,
-            "patience": 0 if model_name in ("wiformer_v3", "wiformer_v4") else 10,
+            "patience": 0,
         }
     return {
         "lr": 1e-3,
@@ -515,6 +515,10 @@ def main():
     if args.model in ("wiformer_v3", "wiformer_v4") and args.dataset.startswith("sshar") and args.v3_norm == "sub":
         # WiFormer v3 normalises every sample itself (mean per (rx, sub), std per rx),
         # which cancels any global z-score -> skip the dataset's mean/std pass.
+        dataset_kwargs["normalize"] = False
+    if args.model == "wiformer" and args.dataset.startswith("sshar") and not args.no_sample_norm:
+        # WiFormer v2 now uses the v4 per-sample normalisation (std per rx), which a
+        # global z-score would distort -> skip the dataset's mean/std pass as in v4.
         dataset_kwargs["normalize"] = False
 
     if args.model == "cnn_gru":

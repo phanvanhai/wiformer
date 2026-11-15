@@ -71,7 +71,7 @@ DESIGN_VARIANTS = {
     "k3_l2": ("Depth", "Block 3: 2 layers", ["--k3_layers=2"]),
 
     # --- Input / preprocessing ---
-    "no_norm": ("Input", "No per-sample z-score", ["--no_sample_norm"]),
+    "no_norm": ("Input", "No per-sample normalisation (loader global z-score)", ["--no_sample_norm"]),
     "all_ant": ("Input", "All antennas as views (R x A)", ["--ant_mode=all"]),
     "win32": ("Input", "Window 32 / stride 16", ["--window=32", "--stride=16"]),
     "win128": ("Input", "Window 128 / stride 64", ["--window=128", "--stride=64"]),
@@ -219,10 +219,8 @@ def split_label(args):
 
 
 def folder_name(args, name):
-    """wiformer_v3 / v4: <dataset>_<split>_<variant>; wiformer (v2): <dataset>_wiformer_<variant> (unchanged)."""
-    if args.model in ("wiformer_v3", "wiformer_v4"):
-        return f"{args.dataset}_{split_label(args)}_{name}"
-    return f"{args.dataset}_{args.model}_{name}"
+    """<dataset>_<split>_<variant> (v2, v3, v4)."""
+    return f"{args.dataset}_{split_label(args)}_{name}"
 
 
 def run_dir(args, name):

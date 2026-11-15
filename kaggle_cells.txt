@@ -41,6 +41,9 @@
 #              (lie_down, fall, walk, pickup, run, sit_down, stand_up) -> chỉ dùng cho ut_har
 #
 # VARIANTS (wiformer v2, MODEL = 'wiformer'; python ablation.py --list)
+#   v2 trên nhánh này dùng CHUNG chuẩn hoá với v4 (trừ mean theo (rx, sub), chia 1 std mỗi rx,
+#   không z-score toàn cục) và cùng công thức huấn luyện (patience 0) -> v2 vs v4 chỉ khác Khối 2-3.
+#   (v2 gốc với z-score từng (rx, sub) nằm ở nhánh khác)
 #   core  : full wo_fft wo_conv wo_block1 wo_block2 wo_block3
 #   design: k2_per_rx k2_pe_none k2_pe_rx_sub k3_learned k3_nopos k2_l1 k3_l2 no_norm all_ant win32 win128
 #   window: b_nowin b_nooverlap
@@ -48,7 +51,7 @@
 # EXTRA (tham số thêm cho main.py, áp dụng cho mọi biến thể trong VARIANTS)
 #   Huấn luyện
 #     --epochs=100            số epoch (vd --epochs=2 để chạy thử)
-#     --patience=0            dừng sớm sau N epoch val không tăng (v3 mặc định 0 = tắt)
+#     --patience=0            dừng sớm sau N epoch val không tăng (mặc định 0 = tắt)
 #     --lr=1e-3  --optimizer=adam|adamw  --weight_decay=0  --batch_size=32  --warmup_epochs=5
 #     --class_weights=auto    CE có trọng số: 'auto' (nghịch tần suất tập train) hoặc
 #                             danh sách K số, vd '--class_weights=1,1,0.8,1,0.8,1.5,2'

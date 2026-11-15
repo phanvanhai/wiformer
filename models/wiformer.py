@@ -518,10 +518,11 @@ class WiFormer(BaseModel):
             R, S = x.shape[1], x.shape[2]
             x = x.reshape(B, R, S // self.sub_group, self.sub_group, T).mean(dim=3)
         if self.sample_norm:
-            # z-score per (rx, sub) per sample, along time
-            mean = x.mean(dim=-1, keepdim=True)
-            std = x.std(dim=-1, keepdim=True) + 1e-6
-            x = (x - mean) / std
+            # same as WiFormer v4: remove the static level per (rx, sub), then one
+            # std per (sample, rx) -> keeps the relative strength between subcarriers
+            x = x - x.mean(dim=-1, keepdim=True)
+            std = x.flatten(2).std(dim=-1).view(B, x.shape[1], 1, 1) + 1e-6
+            x = x / std
         return x
 
     def forward(self, x):
