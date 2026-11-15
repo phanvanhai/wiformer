@@ -75,8 +75,8 @@
 # SSHAR-ESP room 2: thư mục chứa room_02/ (bên trong room_02/esp/rx_00/...)
 # UT_HAR          : thư mục chứa data/X_train.csv và label/y_train.csv (hoặc thư mục cha)
 DATA_PATHS = {
-    'sshar_esp': '/kaggle/input/datasets/phanvanhai/csi-room-02-0707',
-    'ut_har':    '/kaggle/input/ut-har',          # sửa theo tên dataset UT_HAR đã Add Input
+    'sshar_esp': '/kaggle/input/datasets/phanvanhai/cmr-har-room2',
+    'ut_har':    '/kaggle/input/datasets/phanvanhai/ut-har/UT_HAR',
 }
 
 REPO_URL   = 'https://github.com/phanvanhai/wiformer.git'

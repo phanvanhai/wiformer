@@ -214,7 +214,7 @@ def is_done(path):
 def run_variant(args, name):
     variants, _ = tables(args.model)
     cmd = [
-        sys.executable, "main.py",
+        sys.executable, "-u", "main.py",      # -u: unbuffered, log appears line by line
         f"--data_root={args.data_root}",
         f"--dataset={args.dataset}",
         f"--model={args.model}",
@@ -229,7 +229,8 @@ def run_variant(args, name):
     print(f"# [{name}] {variants[name][1]}")
     print("# " + " ".join(cmd))
     print("#" * 70, flush=True)
-    return subprocess.run(cmd).returncode
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    return subprocess.run(cmd, env=env).returncode
 
 
 def summarize(args, names, tag):

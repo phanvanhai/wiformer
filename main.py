@@ -8,7 +8,16 @@ import argparse
 import json
 import os
 import random
+import sys
 import time
+
+# Flush every line even when stdout is a pipe (Kaggle / subprocess), so the
+# log always appears as training goes on.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except AttributeError:
+    pass
 
 import numpy as np
 
