@@ -239,6 +239,7 @@ def train(
     optimizer_cfg=None,
     patience=10,
     accum_steps=1,
+    class_weights=None,
 ):
     """
     Train model.
@@ -267,7 +268,12 @@ def train(
 
     model = model.to(device)
 
-    criterion = nn.CrossEntropyLoss()
+    # class_weights: list of K floats (weighted CE), or None
+    w = None if class_weights is None else torch.tensor(class_weights, dtype=torch.float32, device=device)
+    criterion = nn.CrossEntropyLoss(weight=w)
+    if w is not None:
+        print(f"Class weights: {[round(float(v), 3) for v in w]}")
+        model.class_weight = w    # also used by model.extra_loss (v3 per-stream CE)
     optimizer = create_optimizer(model, lr, optimizer_cfg)
     scheduler = create_scheduler(optimizer, scheduler_cfg)
 

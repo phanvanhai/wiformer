@@ -353,6 +353,9 @@ def parse_args():
                         help="WiFormer v3 per-sample normalisation: sub = minus mean per (rx, sub), / std per rx "
                              "(default); none = keep the loader's input (UT_HAR: per-sample min-max), "
                              "i.e. keep the static level of each channel")
+    parser.add_argument("--class_weights", type=str, default=None,
+                        help="Weighted CE: comma list of K floats (e.g. AMCS-TCN UT_HAR: 1,1,0.8,1,0.8,1.5,2) "
+                             "or 'auto' (inverse train frequency, mean 1). Default: none")
     parser.add_argument("--k3f_layers", type=int, default=2,
                         help="WiFormer v3 (late fusion): layers of the Block 3 of the speed stream")
     parser.add_argument("--window_sec", type=float, default=0.3,
@@ -399,6 +402,20 @@ def parse_args():
         )
 
     return parser.parse_args()
+
+
+def resolve_class_weights(spec, train_loader, num_classes):
+    """--class_weights: None | 'auto' (inverse train frequency, mean 1) | 'w0,w1,...'"""
+    if not spec:
+        return None
+    if spec == "auto":
+        ys = torch.cat([y for _, y in train_loader]).long()
+        counts = torch.bincount(ys, minlength=num_classes).float().clamp(min=1)
+        return (counts.sum() / (num_classes * counts)).tolist()
+    w = [float(v) for v in spec.split(",")]
+    if len(w) != num_classes:
+        raise ValueError(f"--class_weights has {len(w)} values, dataset has {num_classes} classes")
+    return w
 
 
 def get_default_train_cfg(model_name):
@@ -706,6 +723,7 @@ def main():
         optimizer_cfg=optimizer_cfg,
         patience=args.patience,
         accum_steps=args.accum_steps,
+        class_weights=resolve_class_weights(args.class_weights, train_loader, num_classes),
     )
     training_time = time.time() - start_time
     # --------------------------------------------------------

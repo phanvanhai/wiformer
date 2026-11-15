@@ -142,6 +142,10 @@ V3_VARIANTS = {
     # level of each channel (input = loader's per-sample min-max)
     "nonorm": ("Norm", "No per-sample normalisation in the model (keep static level)",
                ["--v3_ablation=full", "--v3_norm=none"]),
+    # nonorm + the hand-set class weights of AMCS-TCN for UT_HAR
+    # (lie_down, fall, walk, pickup, run, sit_down, stand_up)
+    "nonorm_cw": ("Norm", "nonorm + AMCS-TCN class weights (UT_HAR)",
+                  ["--v3_ablation=full", "--v3_norm=none", "--class_weights=1,1,0.8,1,0.8,1.5,2"]),
 }
 V3_CORE = ["full", "wo_freq", "wo_main", "wo_block1", "wo_block2", "wo_block3"]
 V3_SETS = {"core": V3_CORE, "all": list(V3_VARIANTS)}

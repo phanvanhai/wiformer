@@ -523,10 +523,11 @@ class WiFormerV3(BaseModel):
             if self._stream_logits is None:
                 return None
             z_main, z_freq = self._stream_logits
-            return self.aux_w * (F.cross_entropy(z_main, y) + F.cross_entropy(z_freq, y))
+            cw = getattr(self, "class_weight", None)     # set by train.py (--class_weights)
+            return self.aux_w * (F.cross_entropy(z_main, y, weight=cw) + F.cross_entropy(z_freq, y, weight=cw))
         if self._aux_logits is None:
             return None
-        return self.aux_w * F.cross_entropy(self._aux_logits, y)
+        return self.aux_w * F.cross_entropy(self._aux_logits, y, weight=getattr(self, "class_weight", None))
 
     # --------------------------------------------------------
     @torch.no_grad()

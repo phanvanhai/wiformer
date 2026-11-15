@@ -26,6 +26,8 @@
 #   gate_full  thiết kế đầu tiên: cổng dư ở M + 1 Khối 3 (để so sánh)
 #   nonorm     full nhưng KHÔNG chuẩn hoá theo mẫu trong mô hình (giữ mức tĩnh từng kênh)
 #              -> thí nghiệm riêng cho UT_HAR: DATASET='ut_har', VARIANTS=['nonorm']
+#   nonorm_cw  nonorm + trọng số lớp đặt tay của AMCS-TCN cho UT_HAR [1,1,0.8,1,0.8,1.5,2]
+#              (lie_down, fall, walk, pickup, run, sit_down, stand_up) -> chỉ dùng cho ut_har
 #
 # VARIANTS (wiformer v2, MODEL = 'wiformer'; python ablation.py --list)
 #   core  : full wo_fft wo_conv wo_block1 wo_block2 wo_block3
@@ -37,6 +39,8 @@
 #     --epochs=100            số epoch (vd --epochs=2 để chạy thử)
 #     --patience=0            dừng sớm sau N epoch val không tăng (v3 mặc định 0 = tắt)
 #     --lr=1e-3  --optimizer=adam|adamw  --weight_decay=0  --batch_size=32  --warmup_epochs=5
+#     --class_weights=auto    CE có trọng số: 'auto' (nghịch tần suất tập train) hoặc
+#                             danh sách K số, vd '--class_weights=1,1,0.8,1,0.8,1.5,2'
 #     --scheduler=reducelronplateau --scheduler-patience=4 --scheduler-gamma=0.5
 #                             (thay cosine bằng giảm lr khi val chững lại)
 #   Cửa sổ (v3)
