@@ -369,11 +369,7 @@ def compute_ut_har_mean_std(root_dir):
     total_sq = 0.0
     total_count = 0
 
-    n = len(dataset)
-    print(f"[XRF55] computing mean/std over {n} train samples ...")
-    for i, (x, _) in enumerate(dataset):
-        if (i + 1) % 500 == 0 or i + 1 == n:
-            print(f"[XRF55]   mean/std {i + 1}/{n}")
+    for x, _ in dataset:
         x = x.numpy().astype(np.float64)
         total_sum += x.sum()
         total_sq += np.square(x).sum()
@@ -385,8 +381,7 @@ def compute_ut_har_mean_std(root_dir):
         total_sq / total_count - mean ** 2
     )
 
-    print(f"UT_HAR mean = {mean:.6f}")
-    print(f"UT_HAR std  = {std:.6f}")
+    print(f"UT_HAR train mean / std = {mean:.6f} / {std:.6f}")
 
     return mean, std
 
@@ -818,11 +813,7 @@ def compute_sshar_mean_std(dataset):
     total_sq = 0.0
     total_count = 0
 
-    n = len(dataset)
-    print(f"[XRF55] computing mean/std over {n} train samples ...")
-    for i, (x, _) in enumerate(dataset):
-        if (i + 1) % 500 == 0 or i + 1 == n:
-            print(f"[XRF55]   mean/std {i + 1}/{n}")
+    for x, _ in dataset:
         x = x.numpy().astype(np.float64)
         total_sum += x.sum()
         total_sq += np.square(x).sum()
@@ -833,8 +824,7 @@ def compute_sshar_mean_std(dataset):
         total_sq / total_count - mean ** 2
     )
 
-    print(f"SSHAR mean = {mean:.6f}")
-    print(f"SSHAR std  = {std:.6f}")
+    print(f"SSHAR train mean / std = {mean:.6f} / {std:.6f}")
 
     return mean, std
 
@@ -1034,11 +1024,7 @@ def compute_xrf55_mean_std(root_dir, case_split, shape_option="2d", num_sub=30, 
     total_sq = 0.0
     total_count = 0
 
-    n = len(dataset)
-    print(f"[XRF55] computing mean/std over {n} train samples ...")
-    for i, (x, _) in enumerate(dataset):
-        if (i + 1) % 500 == 0 or i + 1 == n:
-            print(f"[XRF55]   mean/std {i + 1}/{n}")
+    for x, _ in dataset:
         x = x.numpy().astype(np.float64)
         total_sum += x.sum()
         total_sq += np.square(x).sum()
@@ -1050,8 +1036,7 @@ def compute_xrf55_mean_std(root_dir, case_split, shape_option="2d", num_sub=30, 
     mean = total_sum / total_count
     std = np.sqrt(total_sq / total_count - mean ** 2)
 
-    print(f"XRF55 mean = {mean:.6f}")
-    print(f"XRF55 std  = {std:.6f}")
+    print(f"XRF55 train mean / std = {mean:.6f} / {std:.6f}")
 
     return mean, std
 
