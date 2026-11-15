@@ -15,7 +15,8 @@ Pipeline (B = batch, R = views, S = subcarriers, K = n_win, W = window, D = d_mo
 --------
 preprocess : norm="sub"  -> x - mean_t per (rx, sub), / std per (sample, rx)
              norm="none" -> input as given by the loader              (B, R, S, T)
-windows    : W = floor(window_sec * fs) (even), stride W // 2         (B, R, S, K, W)
+windows    : W = 2^round(log2(window_sec * fs)), stride W // 2       (B, R, S, K, W)
+             (SSHAR-ESP 64 = 0.32 s, UT_HAR 32 = 0.256 s)
 Block 1    : per (rx, sub, window) segment, shared weights
                v_time = Linear(Conv1d x3 -> pool flat4)               (D)
                v_freq = Linear(log1p|rfft| without DC, W//2 bins)     (D)
@@ -163,8 +164,9 @@ class WiFormerV4(BaseModel):
                     f"WiFormerV4: sampling rate of '{dataset}' is unknown. "
                     "Pass --fs (Hz) or --window (samples)."
                 )
-            window = int(window_sec * self.fs)
-            window -= window % 2
+            # nearest power of two to window_sec * fs (ESP 60 -> 64, UT_HAR 37.5 -> 32), so the
+            # Conv stack (stride 2, 2) and the flat4 pool split the window into equal steps
+            window = 2 ** round(math.log2(window_sec * self.fs))
         if window < 16 or window > T:
             raise ValueError(f"WiFormerV4: window={window} samples is out of range (16..T={T})")
         stride = stride or window // 2

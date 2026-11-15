@@ -44,7 +44,9 @@ Phổ trong **một** cửa sổ không biết chiều thời gian, nhưng **chu
 
 ## 3. Kiến trúc
 
-Shape ghi theo SSHAR-ESP: R = 3 RX, S = 56 sub, T = 1000, fs = 200 Hz, W = 60 (0.3 s), stride 30, K = n_win = 32, W/2 = 30 bin phổ, D = 64, H = 4 head, FFN = 256, C = 8 lớp. Với UT-HAR: R = 3, S = 30, T = 250, fs = 125 Hz, W = 36, stride 18, K = 12, 18 bin, C = 7.
+Shape ghi theo SSHAR-ESP: R = 3 RX, S = 56 sub, T = 1000, fs = 200 Hz, W = 64 (0.32 s), stride 32, K = n_win = 30, W/2 = 32 bin phổ, D = 64, H = 4 head, FFN = 256, C = 8 lớp. Với UT-HAR: R = 3, S = 30, T = 250, fs = 125 Hz, W = 32 (0.256 s), stride 16, K = 14, 16 bin, C = 7.
+
+**Độ dài cửa sổ:** W = lũy thừa của 2 gần nhất với 0.3·fs (ESP: 60 → 64; UT-HAR: 37.5 → 32), stride W/2. Lý do: Conv1 và Conv2 đều có stride 2, nên đầu ra Conv dài W/4 (ESP 16 bước, UT-HAR 8 bước). Pool `flat4` khi đó chia W/4 thành 4 ô **bằng nhau** (4 bước và 2 bước mỗi ô). Với W = 60, Conv ra 15 bước và các ô pool không đều. Cửa sổ ESP 0.32 s, vượt mốc 0.3 s không đáng kể.
 
 | Thành phần | Vai trò | Nguồn | Chi tiết |
 |---|---|---|---|
@@ -69,14 +71,14 @@ start
 :Tiền xử lý
 chọn anten[0] · sub: trừ mean theo (rx, sub), chia std theo (mẫu, rx) · none: giữ nguyên
 (B, R = 3, S = 56, T = 1000);
-:Chia cửa sổ W = 60 (0.3 s), stride 30
-(B, 3, 56, K = 32, 60);
+:Chia cửa sổ W = 64 (0.32 s), stride 32
+(B, 3, 56, K = 30, 64);
 :Khối 1 — hai góc nhìn của từng (rx, sub, window), gộp sớm (Hình 2)
 token = Linear(2D → D)([v_time ‖ v_freq])
-(B, 3, 32, 56, D); <<#E3F2FD>>
+(B, 3, 30, 56, D); <<#E3F2FD>>
 :Khối 2 — attention Rx × Sub trong từng window
 bias abs(Δsub) trong cùng RX · scalar cho cặp khác RX · CLS tách vị trí · 2 lớp
-h_k (B, 32, D); <<#FFF3E0>>
+h_k (B, 30, D); <<#FFF3E0>>
 :Khối 3 — Transformer thời gian
 bias T5 có dấu b[i − j] · CLS tách vị trí · 6 lớp
 (B, D); <<#E8F5E9>>
@@ -99,35 +101,36 @@ skinparam ArrowColor #555555
 title Khối 1 — trọng số dùng chung cho mọi (rx, window, sub)
 
 start
-:(B, 3, 56, 32, 60)
-gộp thành N = B·3·32·56 = B·5376 đoạn
-(N, 60);
+:(B, 3, 56, 30, 64)
+gộp thành N = B·3·30·56 = B·5040 đoạn
+(N, 64);
 fork
   :<b>Góc nhìn thời gian</b>
-  Conv1d 1→32, k = 8, s = 2 · BN · GELU   (N, 32, 30)
-  Conv1d 32→64, k = 4, s = 2 · BN · GELU  (N, 64, 15)
-  Conv1d 64→64, k = 3, s = 1 · BN · GELU  (N, 64, 15)
+  Conv1d 1→32, k = 8, s = 2 · BN · GELU   (N, 32, 32)
+  Conv1d 32→64, k = 4, s = 2 · BN · GELU  (N, 64, 16)
+  Conv1d 64→64, k = 3, s = 1 · BN · GELU  (N, 64, 16)
   AdaptiveAvgPool1d(4) · flatten           (N, 256)
+  (mỗi kênh: 16 bước → 4 ô × 4 bước, giữ thứ tự trong window)
   Linear(256 → D)
   v_time (N, D);
 fork again
   :<b>Góc nhìn phổ</b>
-  rfft(60) → 31 bin → log1p(abs)
-  bỏ DC → 30 bin                           (N, 30)
-  Linear(30 → D)
+  rfft(64) → 33 bin → log1p(abs)
+  bỏ DC, giữ 32 bin                        (N, 32)
+  Linear(32 → D)
   v_freq (N, D);
 end fork
 :fuse: Linear(2D → D) trên [v_time ‖ v_freq]
 (N, D);
 :reshape
-(B, 3, 32, 56, D);
+(B, 3, 30, 56, D);
 stop
 @enduml
 ```
 
 Ghi chú:
 - **Bỏ bin DC:** mức tĩnh của đoạn chỉ nằm ở bin DC, nên góc nhìn phổ chỉ mang thông tin dao động. Với `norm=none` (UT-HAR), mức tĩnh vẫn đi vào mô hình qua góc nhìn thời gian.
-- **Khác v2:** v2 dùng W = 64 cố định (32 bin). v4 dùng cửa sổ 0.3 s theo fs như v3, nên số bin phụ thuộc dataset (ESP 30 bin, độ phân giải khoảng 3.3 Hz; UT-HAR 18 bin, khoảng 3.5 Hz).
+- **So với v2:** trên ESP giống hệt v2 (W = 64, 32 bin, độ phân giải 3.125 Hz). Trên UT-HAR, W = 32 (16 bin, độ phân giải khoảng 3.9 Hz), để cửa sổ vẫn dưới 0.3 s.
 
 ## 4. Tham số và MACs
 
@@ -135,15 +138,15 @@ Ghi chú:
 
 | Biến thể | ESP params | ESP MACs | UT-HAR params | UT-HAR MACs |
 |---|---|---|---|---|
-| `full` | 449,056 | 2.451 G | 447,959 | 0.353 G |
-| `wo_fft` | 442,976 | 2.418 G | 442,647 | 0.347 G |
-| `wo_conv` | 407,296 | 0.579 G | 406,199 | 0.118 G |
-| `wo_block1` | 405,056 | 0.568 G | 403,191 | 0.115 G |
-| `wo_block2` | 348,784 | 1.914 G | 347,791 | 0.244 G |
-| `wo_block3` | 148,824 | 2.441 G | 147,887 | 0.349 G |
+| `full` | 449,168 | 2.408 G | 447,847 | 0.384 G |
+| `wo_fft` | 442,960 | 2.377 G | 442,663 | 0.377 G |
+| `wo_conv` | 407,408 | 0.544 G | 406,087 | 0.137 G |
+| `wo_block1` | 405,296 | 0.533 G | 402,951 | 0.134 G |
+| `wo_block2` | 348,896 | 1.905 G | 347,679 | 0.257 G |
+| `wo_block3` | 148,952 | 2.399 G | 147,759 | 0.379 G |
 
 - So với v3 `full` (554K, 2.40 G), v4 ít hơn khoảng 105K tham số vì bỏ luồng tốc độ và Khối 3'. MACs gần như không đổi.
-- Góc nhìn phổ chỉ tốn khoảng 6K tham số và 33M MACs (2 Linear trên 5376 token). Gần như toàn bộ MACs nằm ở Conv của Khối 1, nên `wo_conv` rẻ hơn khoảng 4 lần.
+- Góc nhìn phổ chỉ tốn khoảng 6K tham số và 31M MACs (2 Linear trên 5040 token). Gần như toàn bộ MACs nằm ở Conv của Khối 1, nên `wo_conv` rẻ hơn khoảng 4 lần.
 
 ## 5. Phân tích sau khi train
 

@@ -55,7 +55,9 @@
 #     --scheduler=reducelronplateau --scheduler-patience=4 --scheduler-gamma=0.5
 #                             (thay cosine bằng giảm lr khi val chững lại)
 #   Cửa sổ (v3)
-#     --window_sec=0.3        độ dài cửa sổ (giây), W = floor(window_sec * fs), stride = W/2
+#     --window_sec=0.3        độ dài cửa sổ (giây), stride = W/2
+#                             v3: W = floor(window_sec * fs) chẵn (ESP 60, UT_HAR 36)
+#                             v4: W = lũy thừa 2 gần nhất (ESP 64 = 0.32 s, UT_HAR 32 = 0.256 s)
 #     --window=60 --stride=30 đặt trực tiếp theo số mẫu (ghi đè window_sec)
 #     --fs=200                tần số lấy mẫu (mặc định sshar_esp 200 Hz, ut_har 125 Hz)
 #   Kiến trúc (v3; v4 dùng chung --v3_norm, --k2_*, --k3_layers, --k3_heads, --k1_*, --d_model, --dropout)
