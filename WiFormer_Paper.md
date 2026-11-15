@@ -13,7 +13,7 @@ CSI biên độ của một mẫu hoạt động là một khối ba chiều **R
 
 WiFormer xử lý lần lượt ba thang đó bằng ba khối, với ba ý tưởng chính:
 
-1. **Token hai góc nhìn, gộp sớm.** Mỗi đoạn ngắn của mỗi kênh (rx, subcarrier) được mô tả đồng thời bằng dạng sóng (Conv1d) và phổ biên độ (FFT). Hai mô tả được gộp ngay thành một token. Dạng sóng và phổ là hai góc nhìn **thẳng hàng** của cùng một đoạn tín hiệu, nên gộp tại token cho phép chúng tương tác ở mọi tầng sau, trong một luồng duy nhất.
+1. **Token hai góc nhìn, gộp sớm.** Mỗi đoạn ngắn của mỗi kênh (rx, subcarrier) được mô tả đồng thời bằng dạng sóng (Conv1d) và phổ biên độ (FFT). Hai mô tả được gộp ngay thành một token. Dạng sóng và phổ là hai góc nhìn **thẳng hàng** của cùng một đoạn tín hiệu, nên gộp tại token cho phép chúng tương tác ở mọi tầng sau.
 2. **Attention không gian với bias vị trí tương đối, không phụ thuộc danh tính RX.** Trong mỗi đoạn, attention giữa các token (rx, subcarrier) dùng bias theo khoảng cách subcarrier và một bias cho cặp khác RX. Không có embedding vị trí tuyệt đối.
 3. **Attention thời gian với bias tương đối có dấu.** Giữa các đoạn, bias attention phụ thuộc vào hiệu `i − j` có dấu, nên phân biệt được "trước" với "sau". Điều này cần cho các hành động đối xứng gương theo thời gian, như ngồi xuống và đứng lên.
 
@@ -39,9 +39,7 @@ Trên SSHAR-ESP (8 lớp, 3 RX ESP32), WiFormer đạt **96.80%** độ chính x
 - ALiBi (Press et al., ICLR 2022) dùng bias tuyến tính cố định theo `|i − j|`, đối xứng hai chiều.
 - WiFormer dùng bias học được, **có dấu** theo trục thời gian, và **theo khoảng cách** theo trục subcarrier.
 
-**Gộp đa phương thức.**
-- Gộp muộn (mỗi nguồn một mạng, gộp logit) dễ gặp *modality imbalance*: một nguồn học nhanh lấn át nguồn kia (Wang et al., CVPR 2020; Peng et al., CVPR 2022).
-- Gộp sớm thích hợp khi các nguồn thẳng hàng về không gian và thời gian. Thời gian và phổ của cùng một đoạn CSI là trường hợp như vậy.
+**Kết hợp miền thời gian và miền tần số.** Các mô hình CSI thường chọn một trong hai miền: chuỗi biên độ theo thời gian, hoặc spectrogram. Gộp đặc trưng ngay ở mức đầu vào thích hợp khi các nguồn thẳng hàng về không gian và thời gian. Thời gian và phổ của cùng một đoạn CSI là trường hợp như vậy.
 
 **Baseline.** CNN-GRU (CNN trích đặc trưng không gian theo từng bước thời gian, GRU mô hình hóa chuỗi) và BiMamba (mô hình không gian trạng thái hai chiều, dựa trên Mamba của Gu & Dao, 2023).
 
@@ -292,7 +290,7 @@ Số mẫu nhầm theo cặp lớp:
 ## 6. Kết luận
 
 WiFormer mô hình hóa CSI theo đúng ba thang của nó: trong đoạn, giữa các kênh, và theo thời gian.
-- **Token gộp sớm hai góc nhìn dạng sóng và phổ** cho phép hai nguồn thông tin bổ sung nhau tương tác ở mọi tầng, trong một luồng duy nhất.
+- **Token gộp sớm hai góc nhìn dạng sóng và phổ** cho phép hai nguồn thông tin bổ sung nhau tương tác ở mọi tầng.
 - **Bias vị trí tương đối** giúp mô hình không phụ thuộc danh tính RX, và phân biệt được chiều thời gian.
 
 Trên SSHAR-ESP, WiFormer đạt 96.80% (97.29% trên 6 hành động), vượt CNN-GRU và BiMamba với ít tham số hơn. Ablation xác nhận phần lớn giả thuyết thiết kế, và cho thấy mỗi thành phần xử lý một nhóm lỗi riêng:
