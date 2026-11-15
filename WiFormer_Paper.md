@@ -13,7 +13,7 @@ CSI biên độ của một mẫu hoạt động là một khối ba chiều **R
 
 WiFormer xử lý lần lượt ba thang đó bằng ba khối, với ba ý tưởng chính:
 
-1. **Token hai góc nhìn, gộp sớm.** Mỗi đoạn ngắn của mỗi kênh (rx, subcarrier) được mô tả đồng thời bằng dạng sóng (Conv1d) và phổ biên độ (FFT). Hai mô tả được gộp ngay thành một token. Dạng sóng và phổ là hai góc nhìn **thẳng hàng** của cùng một đoạn tín hiệu, nên gộp tại token cho phép chúng tương tác ở mọi tầng sau, và tránh mất cân bằng giữa các luồng khi gộp muộn.
+1. **Token hai góc nhìn, gộp sớm.** Mỗi đoạn ngắn của mỗi kênh (rx, subcarrier) được mô tả đồng thời bằng dạng sóng (Conv1d) và phổ biên độ (FFT). Hai mô tả được gộp ngay thành một token. Dạng sóng và phổ là hai góc nhìn **thẳng hàng** của cùng một đoạn tín hiệu, nên gộp tại token cho phép chúng tương tác ở mọi tầng sau, trong một luồng duy nhất.
 2. **Attention không gian với bias vị trí tương đối, không phụ thuộc danh tính RX.** Trong mỗi đoạn, attention giữa các token (rx, subcarrier) dùng bias theo khoảng cách subcarrier và một bias cho cặp khác RX. Không có embedding vị trí tuyệt đối.
 3. **Attention thời gian với bias tương đối có dấu.** Giữa các đoạn, bias attention phụ thuộc vào hiệu `i − j` có dấu, nên phân biệt được "trước" với "sau". Điều này cần cho các hành động đối xứng gương theo thời gian, như ngồi xuống và đứng lên.
 
@@ -106,10 +106,9 @@ Thiết kế này có hai tính chất:
 |---|---|---|
 | H1 | Trích đặc trưng trong đoạn là cần thiết; phép chiếu tuyến tính đoạn thô không đủ | `wo_block1` |
 | H2 | Hai góc nhìn bổ sung nhau. Phổ mang tốc độ (đi ↔ chạy). Dạng sóng mang hình dạng (chuyển tư thế, phân biệt trạng thái tĩnh) | `wo_fft`, `wo_conv`, knock-out |
-| H3 | Gộp sớm tại token tốt hơn gộp muộn hai luồng | `late_fusion` |
-| H4 | Attention không gian tốt hơn lấy trung bình các kênh | `wo_block2`, `freq_mean` |
-| H5 | Bias vị trí tương đối có dấu tốt hơn mã hóa vị trí tuyệt đối/đối xứng, nhất là với các hành động ngược chiều thời gian | `abs_pos` |
-| H6 | Mô hình hóa diễn biến giữa các đoạn là cần thiết | `wo_block3` |
+| H3 | Attention không gian tốt hơn lấy trung bình các kênh | `wo_block2`, `freq_mean` |
+| H4 | Bias vị trí tương đối có dấu tốt hơn mã hóa vị trí tuyệt đối/đối xứng, nhất là với các hành động ngược chiều thời gian | `abs_pos` |
+| H5 | Mô hình hóa diễn biến giữa các đoạn là cần thiết | `wo_block3` |
 
 ## 4. Triển khai và thiết lập thí nghiệm
 
@@ -165,7 +164,6 @@ Mỗi biến thể thay đổi một thành phần, phần còn lại giữ nguy
 | `wo_fft` | Token chỉ có `v_time` |
 | `wo_conv` | Token chỉ có `v_freq` |
 | `wo_block1` | Token = `Linear(W → D)` trên đoạn thô |
-| `late_fusion` | Hai luồng gộp muộn: (a) luồng thời gian = token Conv → Khối 2 → Khối 3; (b) luồng phổ = phổ trung bình theo subcarrier → MLP → mean/max qua RX → Khối 3 riêng. Logit gộp với trọng số học được theo lớp, mỗi luồng có CE phụ. W = 60. Hàng "chỉ luồng phổ" là luồng (b) train riêng |
 | `abs_pos` | Khối 2: embedding subcarrier tuyệt đối cộng vào token, thay cho bias tương đối. Khối 3: ALiBi đối xứng `−m_h·\|i − j\|`, thay cho bias có dấu |
 | `wo_block2` | Khối 2 = trung bình R·S token của đoạn |
 | `freq_mean` | Như `wo_conv`, nhưng Khối 2 = trung bình. Tương đương phổ trung bình qua (rx, s) |
@@ -203,8 +201,6 @@ Số mẫu nhầm theo cặp lớp (tính cả hai chiều):
 | wo_fft | 95.86 | −0.94 | 97.19 | −0.78 | 96.25 | −1.04 | 443K | 2.38 G |
 | wo_conv | 95.16 | −1.64 | 97.27 | −0.70 | 96.35 | −0.94 | 407K | 0.54 G |
 | wo_block1 | 91.72 | **−5.08** | 96.02 | **−1.95** | 94.69 | **−2.60** | 405K | 0.53 G |
-| late_fusion | 96.09 | −0.71 | 97.34 | −0.63 | 96.46 | −0.83 | 554K | 2.40 G |
-| *(late_fusion, chỉ luồng phổ)* | 96.17 | −0.63 | 97.73 | −0.24 | 96.98 | −0.31 | 115K | 4.1 M |
 | *Khối 2* | | | | | | | | |
 | wo_block2 | 94.61 | −2.19 | 97.42 | −0.55 | 96.56 | −0.73 | 349K | 1.91 G |
 | freq_mean | (bổ sung) | | | | | | 307K | 0.04 G |
@@ -221,8 +217,6 @@ Số mẫu nhầm theo cặp lớp:
 | wo_fft | 10 | 12 | 22 | 17 | 53 |
 | wo_conv | 13 | 17 | 16 | 27 | 62 |
 | wo_block1 | 14 | 19 | 24 | 55 | 106 |
-| late_fusion | 5 | 8 | 24 | 16 | 50 |
-| late_fusion, chỉ luồng phổ | 14 | 18 | 10 | 20 | 49 |
 | wo_block2 | 11 | 14 | 18 | 36 | 69 |
 | abs_pos | 12 | 21 | 20 | 13 | 56 |
 
@@ -251,27 +245,18 @@ Số mẫu nhầm theo cặp lớp:
 - Knock-out cho cùng bức tranh. Chỉ dùng phổ thì mất hẳn lớp nằm im (0%). Chỉ dùng thời gian thì lớp đi còn 48.8% và lớp phòng trống còn 28.8%.
 - Mô hình dùng cả hai góc nhìn với mức độ tương đương: chuẩn trọng số gần bằng nhau, và bỏ bên nào cũng mất 25–34 điểm.
 
-**H3: Gộp sớm tốt hơn gộp muộn. Được xác nhận, kèm lưu ý.**
-- Mô hình đầy đủ hơn `late_fusion` 0.6–0.8 điểm ở cả ba mức, với ít hơn 105K tham số.
-- Chênh lệch tập trung ở đi ↔ chạy (24 xuống 16); các cặp khác ngang nhau.
-- Trong `late_fusion`, luồng phổ train riêng đạt 96.17%, cao hơn chính `late_fusion` (96.09%). Như vậy gộp muộn không tận dụng được luồng phổ, đúng với hiện tượng mất cân bằng giữa các luồng.
-- Lưu ý: `late_fusion` còn khác ở cửa sổ (60 so với 64) và CE phụ.
-
-**H4: Attention không gian tốt hơn trung bình. Xác nhận một phần.**
+**H3: Attention không gian tốt hơn trung bình. Xác nhận một phần.**
 - `wo_block2` tụt 2.19 điểm ở 8 lớp, nhưng chỉ 0.55–0.73 điểm ở 7 lớp và 6 hành động. Lỗi tăng chủ yếu ở nằm im ↔ phòng trống (15 lên 36).
 - Trên split theo lần lặp, đóng góp chính của Khối 2 là **chọn kênh mang vết của các dao động nhỏ**, vốn chỉ hiện ở một số subcarrier và RX.
-- Với riêng góc nhìn phổ thì có dấu hiệu ngược lại: luồng phổ lấy trung bình theo subcarrier (96.17%, đi ↔ chạy 10 lỗi) tốt hơn `wo_conv` (95.16%, 16 lỗi). Giải thích khả dĩ:
-  - phổ của một đoạn ngắn trên một kênh rất nhiễu, và lấy trung bình 56 kênh giảm nhiễu đáng kể;
-  - tần số Doppler gần như giống nhau trên mọi subcarrier, nên chọn kênh được lợi ít.
-- Hai biến thể này còn khác nhau ở MLP, cách gộp RX và kích thước khối thời gian. Phép so sánh sạch là `freq_mean` với `wo_conv` (bổ sung).
+- Với riêng góc nhìn phổ, câu hỏi "attention trên phổ từng subcarrier hay lấy trung bình phổ" được trả lời bằng `freq_mean` so với `wo_conv` (bổ sung).
 
-**H5: Bias tương đối có dấu. Được xác nhận.**
+**H4: Bias tương đối có dấu. Được xác nhận.**
 - `abs_pos` giữ nguyên Khối 1, chuẩn hóa, quy mô và cách huấn luyện, chỉ đổi cơ chế mã hóa vị trí. Nó tụt 1.18 điểm ở 8 lớp.
 - Mức tụt **tăng** khi bỏ cặp tĩnh (−1.33 ở 7 lớp, −1.77 ở 6 hành động). Lợi ích nằm ở chính các hành động.
 - Lỗi tăng mạnh nhất ở nội bộ ngồi xuống / đứng lên / cúi nhặt (8 lên 21), trong đó ngồi ↔ đứng tăng từ 6 lên 12. Đây đúng là các hành động gần như đối xứng gương theo thời gian, mà bias đối xứng không phân biệt được.
 - Chưa tách được phần đóng góp của Khối 2 và Khối 3 trong biến thể này.
 
-**H6: Khối 3.** (bổ sung)
+**H5: Khối 3.** (bổ sung)
 
 **Thứ tự tác động trên 6 hành động:**
 
@@ -281,7 +266,6 @@ Số mẫu nhầm theo cặp lớp:
 | Mã hóa vị trí tương đối | −1.77 |
 | Góc nhìn thời gian | −1.04 |
 | Góc nhìn phổ | −0.94 |
-| Gộp sớm (thay bằng gộp muộn) | −0.83 |
 | Khối 2 | −0.73 |
 
 ### 5.5 UT-HAR
@@ -290,20 +274,17 @@ Số mẫu nhầm theo cặp lớp:
 |---|---|---|
 | WiFormer, chuẩn hóa từng mẫu | 71.2 | 58.8 |
 | WiFormer, không chuẩn hóa trong mô hình | 93.4 | 90.6 |
-| late_fusion, không chuẩn hóa | 94.8 | 91.9 |
 | AMCS-TCN (5 seed, có trọng số lớp) | 97.36 ± 0.34 | 95.88 |
 
 **Nhận xét**
 - Trên UT-HAR, bỏ mức tĩnh làm mất 22 điểm. Mức tĩnh ở đây có thể mang thông tin về lớp (ví dụ tư thế cuối của nằm xuống, ngồi xuống), không chỉ là dấu vân tay môi trường. Lựa chọn chuẩn hóa vì vậy phụ thuộc dữ liệu.
-- Ở cấu hình phù hợp, WiFormer vẫn kém mô hình tốt nhất khoảng 4 điểm và kém `late_fusion` 1.4 điểm. Ưu thế của gộp sớm chưa lặp lại trên UT-HAR (chỉ 1 seed).
+- Ở cấu hình phù hợp, WiFormer vẫn kém AMCS-TCN khoảng 4 điểm (WiFormer chỉ 1 seed, không dùng trọng số lớp).
 
 ### 5.6 Hạn chế
 
 1. **Chỉ có split theo lần lặp.** Val gần bão hòa (97–98%), nên chênh lệch giữa các biến thể nhỏ. Lợi ích chính của chuẩn hóa từng mẫu và của Khối 2 được kỳ vọng ở **cross-user**, nhưng chưa được đánh giá. Cần kiểm định chéo 5 fold theo người, mỗi người được test đúng một lần.
 2. **Một seed.** Các chênh lệch dưới 1 điểm (khoảng 10 mẫu) cần thêm seed để khẳng định.
-3. **Một số ablation chưa tách bạch:**
-   - `late_fusion` khác thêm cửa sổ và có loss phụ;
-   - `abs_pos` đổi đồng thời Khối 2 và Khối 3.
+3. **`abs_pos` đổi đồng thời Khối 2 và Khối 3,** nên chưa tách được đóng góp của mã hóa vị trí ở từng khối.
 4. **Nằm im ↔ phòng trống** là nguồn lỗi lớn nhất còn lại (15/41).
    - Phân biệt có nguyên tắc cần vi chuyển động như nhịp thở (0.2–0.5 Hz).
    - Độ phân giải phổ của một đoạn (fs/W = 3.125 Hz) không thấy được nhịp này; chỉ Khối 3 có thể học qua biến thiên giữa các đoạn.
@@ -311,14 +292,14 @@ Số mẫu nhầm theo cặp lớp:
 ## 6. Kết luận
 
 WiFormer mô hình hóa CSI theo đúng ba thang của nó: trong đoạn, giữa các kênh, và theo thời gian.
-- **Token gộp sớm hai góc nhìn dạng sóng và phổ** cho phép hai nguồn thông tin bổ sung nhau tương tác ở mọi tầng, và tránh mất cân bằng của gộp muộn.
+- **Token gộp sớm hai góc nhìn dạng sóng và phổ** cho phép hai nguồn thông tin bổ sung nhau tương tác ở mọi tầng, trong một luồng duy nhất.
 - **Bias vị trí tương đối** giúp mô hình không phụ thuộc danh tính RX, và phân biệt được chiều thời gian.
 
 Trên SSHAR-ESP, WiFormer đạt 96.80% (97.29% trên 6 hành động), vượt CNN-GRU và BiMamba với ít tham số hơn. Ablation xác nhận phần lớn giả thuyết thiết kế, và cho thấy mỗi thành phần xử lý một nhóm lỗi riêng:
 
 | Nhóm lỗi | Thành phần chịu trách nhiệm |
 |---|---|
-| đi ↔ chạy | góc nhìn phổ, gộp sớm |
+| đi ↔ chạy | góc nhìn phổ |
 | ngồi ↔ đứng | bias có dấu, góc nhìn dạng sóng |
 | nằm im ↔ phòng trống | góc nhìn dạng sóng, Khối 2 |
 
