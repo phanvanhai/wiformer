@@ -150,11 +150,29 @@ V3_VARIANTS = {
 V3_CORE = ["full", "wo_freq", "wo_main", "wo_block1", "wo_block2", "wo_block3"]
 V3_SETS = {"core": V3_CORE, "all": list(V3_VARIANTS)}
 
+# ---- WiFormer v4 (--model=wiformer_v4): Block 1 of v2 (early fusion), Blocks 2-3 of v3 ----
+# see WiFormer_v4_Architecture.md, section 6
+V4_VARIANTS = {
+    "full": ("Full", "WiFormer v4 (token = [Conv || FFT], Blocks 2-3 of v3)", ["--v4_ablation=full"]),
+    "wo_fft": ("Block 1", "Block 1 = time view only (Conv)", ["--v4_ablation=wo_fft"]),
+    "wo_conv": ("Block 1", "Block 1 = spectral view only (FFT)", ["--v4_ablation=wo_conv"]),
+    "wo_block1": ("Block 1", "w/o Block 1 (Linear(W,D) on raw window)", ["--v4_ablation=wo_block1"]),
+    "wo_block2": ("Block 2", "w/o Block 2 (mean over Rx x Sub)", ["--v4_ablation=wo_block2"]),
+    "wo_block3": ("Block 3", "w/o Block 3 (mean over windows)", ["--v4_ablation=wo_block3"]),
+    # UT_HAR: no per-sample normalisation inside the model (keep the static level)
+    "nonorm": ("Norm", "No per-sample normalisation in the model (keep static level)",
+               ["--v4_ablation=full", "--v3_norm=none"]),
+}
+V4_CORE = ["full", "wo_fft", "wo_conv", "wo_block1", "wo_block2", "wo_block3"]
+V4_SETS = {"core": V4_CORE, "all": list(V4_VARIANTS)}
+
 
 def tables(model):
     """(variants, sets) of the given model."""
     if model == "wiformer_v3":
         return V3_VARIANTS, V3_SETS
+    if model == "wiformer_v4":
+        return V4_VARIANTS, V4_SETS
     return VARIANTS, SETS
 
 METRIC_KEYS = [
@@ -168,9 +186,9 @@ def parse_args():
     p.add_argument("--dataset", type=str, default=None,
                    choices=["ut_har", "xrf55", "sshar_esp", "sshar_asus"])
     p.add_argument("--data_root", type=str, default=None)
-    p.add_argument("--model", type=str, default="wiformer", choices=["wiformer", "wiformer_v3"])
+    p.add_argument("--model", type=str, default="wiformer", choices=["wiformer", "wiformer_v3", "wiformer_v4"])
     p.add_argument("--result_root", type=str, default=None,
-                   help="default: results/ablation (wiformer), results/ablation_v3 (wiformer_v3)")
+                   help="default: results/ablation (wiformer), results/ablation_<v3|v4> (wiformer_v3 / v4)")
     p.add_argument("--set", type=str, default="core", choices=list(SETS),
                    help="core = remove one block at a time (default), "
                         "design = design choices inside blocks, "
@@ -201,8 +219,8 @@ def split_label(args):
 
 
 def folder_name(args, name):
-    """wiformer_v3: <dataset>_<split>_<variant>; wiformer (v2): <dataset>_wiformer_<variant> (unchanged)."""
-    if args.model == "wiformer_v3":
+    """wiformer_v3 / v4: <dataset>_<split>_<variant>; wiformer (v2): <dataset>_wiformer_<variant> (unchanged)."""
+    if args.model in ("wiformer_v3", "wiformer_v4"):
         return f"{args.dataset}_{split_label(args)}_{name}"
     return f"{args.dataset}_{args.model}_{name}"
 
@@ -305,13 +323,15 @@ def summarize(args, names, tag):
 def main():
     args = parse_args()
     if args.result_root is None:
-        args.result_root = "results/ablation_v3" if args.model == "wiformer_v3" else "results/ablation"
+        args.result_root = {"wiformer_v3": "results/ablation_v3",
+                            "wiformer_v4": "results/ablation_v4"}.get(args.model, "results/ablation")
     if args.split_mode is None:
         args.split_mode = "repeat"
     variants, sets = tables(args.model)
 
     if args.list:
         groups = ((("v3 core (remove one block / branch)", V3_VARIANTS),) if args.model == "wiformer_v3" else
+                  (("v4 core (Block 1 views / remove one block)", V4_VARIANTS),) if args.model == "wiformer_v4" else
                   (("core (remove one block at a time)", CORE_VARIANTS),
                    ("design (choices inside blocks)", DESIGN_VARIANTS),
                    ("scale (bigger blocks)", SCALE_VARIANTS),

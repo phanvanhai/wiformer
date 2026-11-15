@@ -97,6 +97,7 @@ def parse_args():
             "cnn_gru",
             "wiformer",
             "wiformer_v3",
+            "wiformer_v4",
         ],
         help="Model name",
     )
@@ -133,7 +134,7 @@ def parse_args():
         type=int,
         default=None,
         help="Early stopping: stop after N epochs without val-acc improvement (0 = off). "
-             "Default: 0 for wiformer_v3 (full cosine schedule), 10 for the other models",
+             "Default: 0 for wiformer_v3 / v4 (full cosine schedule), 10 for the other models",
     )
 
     parser.add_argument(
@@ -349,8 +350,11 @@ def parse_args():
     parser.add_argument("--v3_fusion", type=str, default="late", choices=["late", "gate"],
                         help="WiFormer v3 fusion: late = two streams, per-class late fusion of logits (option C); "
                              "gate = gated residual at M (first v3 design)")
+    parser.add_argument("--v4_ablation", type=str, default="full",
+                        choices=["full", "wo_fft", "wo_conv", "wo_block1", "wo_block2", "wo_block3"],
+                        help="WiFormer v4 core ablation (Block 1 views / remove one block)")
     parser.add_argument("--v3_norm", type=str, default="sub", choices=["sub", "none"],
-                        help="WiFormer v3 per-sample normalisation: sub = minus mean per (rx, sub), / std per rx "
+                        help="WiFormer v3 / v4 per-sample normalisation: sub = minus mean per (rx, sub), / std per rx "
                              "(default); none = keep the loader's input (UT_HAR: per-sample min-max), "
                              "i.e. keep the static level of each channel")
     parser.add_argument("--class_weights", type=str, default=None,
@@ -421,7 +425,7 @@ def resolve_class_weights(spec, train_loader, num_classes):
 def get_default_train_cfg(model_name):
     """Per-model defaults for lr / batch size / optimizer."""
     model_name = model_name.lower()
-    if model_name in ("wiformer", "wiformer_v3"):
+    if model_name in ("wiformer", "wiformer_v3", "wiformer_v4"):
         # Adam, lr=1e-3 (as in common WiFi-HAR baselines). Warmup + cosine
         # are kept for the Transformer so the large initial lr stays stable.
         # wiformer_v3: no early stopping, so the cosine schedule runs to the end
@@ -432,7 +436,7 @@ def get_default_train_cfg(model_name):
             "optimizer": "adam",
             "weight_decay": 0.0,
             "warmup_epochs": 5,
-            "patience": 0 if model_name == "wiformer_v3" else 10,
+            "patience": 0 if model_name in ("wiformer_v3", "wiformer_v4") else 10,
         }
     return {
         "lr": 1e-3,
@@ -446,7 +450,7 @@ def get_default_train_cfg(model_name):
 
 def get_default_scheduler_cfg(model_name, epochs=100, warmup_epochs=0):
     model_name = model_name.lower()
-    if model_name in ("wiformer", "wiformer_v3"):
+    if model_name in ("wiformer", "wiformer_v3", "wiformer_v4"):
         return {
             "name": "cosineannealinglr",
             "args": {
@@ -508,7 +512,7 @@ def main():
     dataset_kwargs = {}
     dataset_kwargs["case_split"] = args.case_split
     dataset_kwargs["split_mode"] = args.split_mode
-    if args.model == "wiformer_v3" and args.dataset.startswith("sshar") and args.v3_norm == "sub":
+    if args.model in ("wiformer_v3", "wiformer_v4") and args.dataset.startswith("sshar") and args.v3_norm == "sub":
         # WiFormer v3 normalises every sample itself (mean per (rx, sub), std per rx),
         # which cancels any global z-score -> skip the dataset's mean/std pass.
         dataset_kwargs["normalize"] = False
@@ -595,6 +599,26 @@ def main():
             mdrop=args.mdrop,
             aux_w=args.aux_w,
             gate_bias=args.gate_bias,
+        )
+    elif args.model == "wiformer_v4":
+        model_kwargs.update(
+            ablation=args.v4_ablation,
+            norm=args.v3_norm,
+            window_sec=args.window_sec,
+            fs=args.fs,
+            window=args.window,
+            stride=args.stride,
+            d_model=args.d_model,
+            feat=args.feat,
+            k1_conv=args.k1_conv,
+            k1_pool=args.k1_pool,
+            k2_layers=args.k2_layers,
+            k2_heads=args.k2_heads,
+            k2_ff=args.k2_ff,
+            k3_layers=args.k3_layers,
+            k3_heads=args.k3_heads,
+            k3_ff=args.k3_ff,
+            dropout=args.dropout,
         )
 
     model = get_model(

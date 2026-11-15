@@ -10,12 +10,23 @@
 #        ut_har luôn dùng split có sẵn (X_train / X_val / X_test).
 # Train (wiformer_v3): Adam, lr đỉnh 1e-3, warmup 5 epoch + cosine về 0 ở epoch 100,
 #   KHÔNG dừng sớm (patience = 0), checkpoint = epoch có val acc cao nhất.
-# Thời gian trên SSHAR-ESP (T4), 100 epoch: full / wo_freq ~4 h, wo_block1 / wo_block2 ~2-3 h,
-#   wo_main < 1 h -> 1 phiên 12 h chạy được ~2-3 biến thể nặng.
+# Thời gian trên SSHAR-ESP (T4), 100 epoch: v3 full / wo_freq ~4 h, v3 wo_main < 1 h;
+#   v4 full / wo_fft / wo_block3 ~4 h, wo_block2 ~3 h, wo_conv / wo_block1 ~1-1.5 h (ước theo MACs)
+#   -> 1 phiên 12 h chạy được ~2-3 biến thể nặng. UT_HAR: ~45 phút / biến thể.
 # Chạy tiếp phiên sau: thêm Output phiên trước làm Input, đặt PREV_RESULTS
 # (run đã xong sẽ được bỏ qua).
 #
 # ---------------------------- CÁC TUỲ CHỌN ----------------------------
+# VARIANTS (wiformer_v4, xem: python ablation.py --model=wiformer_v4 --list)
+#   Kiến trúc: WiFormer_v4_Architecture.md (Khối 1 của v2 = token [Conv || FFT], Khối 2-3 của v3)
+#   full       v4 đầy đủ, 1 luồng                                       [mô hình đề xuất]
+#   wo_fft     token chỉ có Conv (bỏ góc nhìn phổ)
+#   wo_conv    token chỉ có phổ (bỏ Conv)
+#   wo_block1  Khối 1 = Linear(W, D) trên đoạn thô
+#   wo_block2  Khối 2 = trung bình các token Rx x Sub
+#   wo_block3  Khối 3 = trung bình qua các window
+#   nonorm     full, không chuẩn hoá theo mẫu trong mô hình -> dùng cho UT_HAR
+#
 # VARIANTS (wiformer_v3, xem: python ablation.py --model=wiformer_v3 --list)
 #   full       2 luồng (thời gian + tốc độ), gộp muộn theo lớp            [mô hình đề xuất]
 #   wo_freq    chỉ luồng thời gian (bỏ luồng tốc độ)
@@ -47,9 +58,9 @@
 #     --window_sec=0.3        độ dài cửa sổ (giây), W = floor(window_sec * fs), stride = W/2
 #     --window=60 --stride=30 đặt trực tiếp theo số mẫu (ghi đè window_sec)
 #     --fs=200                tần số lấy mẫu (mặc định sshar_esp 200 Hz, ut_har 125 Hz)
-#   Kiến trúc (v3)
+#   Kiến trúc (v3; v4 dùng chung --v3_norm, --k2_*, --k3_layers, --k3_heads, --k1_*, --d_model, --dropout)
 #     --v3_fusion=late|gate   late = gộp muộn theo lớp (mặc định), gate = cổng dư ở M
-#     --v3_norm=sub|none      sub = trừ mean theo (rx, sub), chia std theo rx (mặc định);
+#     --v3_norm=sub|none      (v3 và v4) sub = trừ mean theo (rx, sub), chia std theo rx (mặc định);
 #                             none = không chuẩn hoá trong mô hình (biến thể nonorm)
 #     --k3_layers=6           số lớp Khối 3 của luồng thời gian
 #     --k3f_layers=2          số lớp Khối 3 của luồng tốc độ (vd 4/4: --k3_layers=4 --k3f_layers=4)
@@ -81,6 +92,8 @@
 #       metrics.json, classification_report.csv (theo lớp),
 #       confusion_matrix_count.csv (số mẫu), confusion_matrix_rowpct.csv (% theo hàng),
 #       confusion_matrix.png (số mẫu + %), predictions.csv (true / pred / xác suất)
+#   v4: view_contribution.json (trọng số fuse + knock-out time / freq theo lớp), block2/3_bias.json,
+#       rx_permutation.json
 #   v3: stream_by_class.csv (w_c + recall từng luồng theo lớp), block2/3/3f_bias.json,
 #       rx_permutation.json; gate_full: gate_by_class.csv
 # Bảng tổng hợp: ablation_<model>_<dataset>_<split>_custom.csv
@@ -97,15 +110,15 @@ DATA_PATHS = {
 }
 
 REPO_URL   = 'https://github.com/phanvanhai/wiformer.git'
-BRANCH     = 'arch_v3'
-MODEL      = 'wiformer_v3'   # wiformer_v3 | wiformer (v2)
+BRANCH     = 'arch_v4'
+MODEL      = 'wiformer_v4'   # wiformer_v4 | wiformer_v3 | wiformer (v2)
 DATASET    = 'sshar_esp'     # sshar_esp | ut_har
 SPLIT_MODE = 'repeat'        # repeat | user | position (đều 6:2:2) ; ut_har: bỏ qua
 CASE       = 0               # chỉ dùng cho user (0..4) / position (0..3)
-VARIANTS   = ['full', 'wo_main']   # danh sách đầy đủ: xem "CÁC TUỲ CHỌN" ở đầu file
+VARIANTS   = ['full']   # danh sách đầy đủ: xem "CÁC TUỲ CHỌN" ở đầu file
 EXTRA      = '--epochs=100'        # xem "CÁC TUỲ CHỌN"; vd '--epochs=2' để chạy thử
-RUN_TAG    = 'ablation_v3'
-PREV_RESULTS = ''            # vd '/kaggle/input/<output-phien-truoc>/results/ablation_v3'
+RUN_TAG    = 'ablation_v4'
+PREV_RESULTS = ''            # vd '/kaggle/input/<output-phien-truoc>/results/ablation_v4'
 
 import os, subprocess, shutil, shlex, time
 from pathlib import Path
@@ -151,7 +164,7 @@ for csv in sorted(Path(RESULT_BASE).glob('ablation_*.csv')):
 for d in sorted(p for p in Path(RESULT_BASE).iterdir() if p.is_dir()):
     print(f'\n######## {d.name}')
     for f in ('summary_splits.csv', 'test/confusion_matrix_rowpct.csv', 'stream_by_class.csv',
-              'gate_by_class.csv', 'rx_permutation.json'):
+              'gate_by_class.csv', 'view_contribution.json', 'rx_permutation.json'):
         if (d / f).exists():
             print(f'# {f}\n' + (d / f).read_text())
 
