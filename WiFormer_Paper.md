@@ -19,7 +19,7 @@ WiFormer xử lý lần lượt ba thang đó bằng ba khối, với ba ý tư�
 
 Ngoài ra, mô hình chuẩn hóa từng mẫu để bỏ mức tĩnh của từng kênh (dấu vân tay của môi trường và người), nhưng vẫn giữ độ mạnh tương đối giữa các subcarrier.
 
-Trên SSHAR-ESP (8 lớp, 3 RX ESP32), WiFormer đạt **96.80%** độ chính xác (6 hành động: **97.29%**), cao hơn CNN-GRU và BiMamba 1.5–1.9 điểm (6 hành động: 3.4–4.1 điểm). Ablation cho thấy mỗi thành phần đều có đóng góp, và mỗi thành phần ứng với một nhóm lỗi riêng. Khối 3 quan trọng nhất cho các hành động. Riêng với góc nhìn phổ, lấy trung bình qua các kênh tốt hơn attention ở các hành động, nhưng kém ở trạng thái tĩnh.
+Trên SSHAR-ESP (8 lớp, 3 RX ESP32), WiFormer đạt **96.80%** độ chính xác (6 hành động: **97.29%**), cao hơn CNN-GRU và BiMamba 1.5–1.9 điểm (6 hành động: 3.4–4.1 điểm). Ablation cho thấy mỗi thành phần đều có đóng góp, và mỗi thành phần ứng với một nhóm lỗi riêng. Khối 3 quan trọng nhất cho các hành động. Riêng với góc nhìn phổ, lấy trung bình qua các kênh tốt hơn attention ở các hành động, nhưng kém ở trạng thái tĩnh. Ghép phổ trung bình theo từng đoạn, kèm modality dropout trên nhánh Khối 2 (`hybrid_drop`), cho kết quả cao nhất: 97.03% ở 8 lớp và 98.23% ở 6 hành động.
 
 ## 2. Các nghiên cứu liên quan
 
@@ -217,6 +217,7 @@ Số mẫu nhầm theo cặp lớp (tính cả hai chiều):
 | wo_block3 | 93.05 | **−3.75** | 94.14 | **−3.83** | 92.29 | **−5.00** | 149K | 2.40 G |
 | *Mở rộng* | | | | | | | | |
 | hybrid | 95.63 | −1.17 | 96.72 | −1.25 | 95.63 | −1.66 | 453K | 2.38 G |
+| hybrid_drop | **97.03** | **+0.23** | **98.67** | **+0.70** | **98.23** | **+0.94** | 453K | 2.38 G |
 
 Số mẫu nhầm theo cặp lớp:
 
@@ -232,6 +233,7 @@ Số mẫu nhầm theo cặp lớp:
 | freq_mean_e200 | 8 | 11 | **7** | 26 | 46 |
 | wo_block3 | **44** | **55** | 13 | 14 | 89 |
 | hybrid | 11 | 12 | 28 | 14 | 56 |
+| hybrid_drop | **3** | **5** | 11 | 21 | **38** |
 
 ### 5.3 Mô hình dựa vào góc nhìn nào
 
@@ -311,9 +313,35 @@ Knock-out tại lớp gộp theo đoạn (chuẩn trọng số: nhánh Khối 2 
 - Nhánh Conv → Khối 2 đạt 100% train từ khoảng epoch 50. Sau đó loss gần 0, nên nhánh phổ trung bình hầu như không còn được học. Đây là hiện tượng cạnh tranh giữa các nguồn khi train chung (Wang et al., CVPR 2020; Wu et al., ICML 2022).
 - Do đó, ghép thêm phổ trung bình bằng một lớp tuyến tính **không chuyển được** lợi thế của `freq_mean`.
 
-**Tiếp theo: `hybrid_drop`** (modality dropout, Neverova et al., ModDrop 2016). Ép Khối 3 đọc được `a_k` mà không thêm tham số hay loss.
-- Nếu knock-out "chỉ phổ trung bình" tăng và đi ↔ chạy giảm: thất bại của `hybrid` do cạnh tranh nhánh.
-- Nếu knock-out tăng nhưng đi ↔ chạy không giảm: vấn đề nằm ở cách gộp. `freq_mean_e200` đã cho thấy phổ trung bình tự nó mang thông tin tốt cho các hành động (mục 5.4, H3).
+#### `hybrid_drop`: modality dropout
+
+Lập luận (đặt ra trước khi chạy):
+- **Nhánh lớn lấn át nhánh nhỏ là điều đoán trước được.** CE chỉ đòi hỏi đầu ra cuối đúng, nên khi train chung, mô hình giảm loss qua nhánh khớp dữ liệu nhanh nhất. Ở đây nhánh Conv → Khối 2 có khoảng 400K tham số và 168 token mỗi đoạn, còn nhánh phổ trung bình chỉ có 32 số mỗi đoạn.
+- **Có lý do vật lý để muốn dùng phổ trung bình.** Trung bình 168 periodogram cho một ước lượng Doppler ít nhiễu, gần như không phụ thuộc kênh. Nhánh Conv thì dễ học thuộc mẫu riêng của dữ liệu train.
+- **Modality dropout** (Neverova et al., ModDrop 2016) mở rộng ý tưởng dropout (Srivastava et al., 2014) từ neuron lên cả nhánh. Khi train, zero toàn bộ `h_k` của một mẫu với xác suất p = 0.5. Ở các mẫu đó, gradient chỉ đi qua `a_k`, nên lớp gộp và Khối 3 buộc phải học đọc phổ trung bình.
+- Cách này không thêm tham số, không thêm loss, không thêm chi phí suy luận. Lúc test dùng cả hai nhánh. So với `hybrid`, chỉ khác đúng một yếu tố.
+
+**Kết quả: cao nhất ở cả ba mức** (97.03 / 98.67 / 98.23), tổng 38 lỗi.
+
+Knock-out:
+
+| Recall (%) | ngồi xuống | đứng lên | cúi nhặt | ngã | nằm im | đi | chạy | phòng trống | Acc |
+|---|---|---|---|---|---|---|---|---|---|
+| Cả hai | 98.8 | 98.8 | 99.4 | 99.4 | 90.6 | 95.6 | 97.5 | 96.3 | 97.0 |
+| Chỉ phổ trung bình | 97.5 | 96.9 | 98.1 | 99.4 | 69.4 | 96.3 | 98.8 | 93.1 | 93.7 |
+| Chỉ nhánh Khối 2 | 6.9 | 1.9 | 0.0 | 39.4 | 81.9 | 5.0 | 0.0 | 97.5 | 29.1 |
+
+**Nhận xét**
+- **6 hành động:** 17 lỗi, ít nhất trong mọi mô hình. Ngồi ↔ đứng chỉ 3 lỗi và nội bộ ngồi/đứng/cúi 5 lỗi, đều tốt hơn mô hình đầy đủ (6 và 8). Đi ↔ chạy 11 lỗi, tốt hơn mô hình đầy đủ (16) nhưng còn kém `freq_mean` (7–8). Mô hình giữ được cả lợi thế của Khối 3 (thứ tự thời gian) lẫn lợi thế của phổ trung bình.
+- **Dropout sửa đúng lỗi của `hybrid`.** Chỉ giữ phổ trung bình thì độ chính xác tăng từ 24.4% lên 93.7%, và đi ↔ chạy giảm từ 28 xuống 11 lỗi. Vậy `hybrid` thất bại vì các nhánh cạnh tranh nhau, không phải vì phổ trung bình thiếu thông tin.
+- **Hai nhánh tự phân vai đúng như thiết kế.**
+  - Phổ trung bình mang các hành động: dùng riêng nó, recall đạt 97–99%.
+  - Nhánh Khối 2 mang trạng thái tĩnh: dùng riêng nó vẫn nhận được nằm im 81.9% và phòng trống 97.5%. Ghép thêm nhánh này nâng recall nằm im từ 69.4% lên 90.6%.
+  - Recall thấp của "chỉ nhánh Khối 2" ở các hành động là ngoài phân bố, vì khi train `a_k` không bao giờ bị zero. Con số này không cho thấy nhánh đó yếu.
+- **Thêm:**
+  - Nằm im ↔ phòng trống 21 lỗi. Kém mô hình đầy đủ (15) và `hybrid` (14), nhưng tốt hơn `freq_mean_e200` (26). Dropout làm nhánh Khối 2 yếu đi một phần ở cặp này.
+  - Chưa overfit: val loss vẫn giảm tới epoch 92–100, và train acc đo khi dropout đang bật là 97.9%.
+- **Độ tin cậy:** chênh +0.23 điểm ở 8 lớp chỉ là 3 mẫu, chưa đủ để nói hơn mô hình đầy đủ. Ở 6 hành động, +0.94 điểm là 9 mẫu, đang ở mức ranh giới. Bằng chứng chắc nhất là cơ chế: knock-out tăng từ 24% lên 94%, và đi ↔ chạy giảm từ 28 xuống 11.
 
 ### 5.6 UT-HAR
 
@@ -342,7 +370,8 @@ Split theo lần lặp, 1 seed. Δ so với mô hình đầy đủ. Số lỗi �
 | Khối 2 | wo_block2 | Khối 2 thay bằng trung bình 168 token (rx, sub) của đoạn | 94.61 | −2.19 | 97.42 | −0.55 | 96.56 | −0.73 | **6 hành động:** 33 lỗi, chỉ −0.73. Attention không gian ảnh hưởng ít đến hành động. Thêm: nằm im ↔ phòng trống 15 → 36. Khối 2 chủ yếu giúp trạng thái tĩnh, nhờ chọn được kênh chứa dao động nhỏ |
 | Mã hóa vị trí | abs_pos | Khối 2: embedding subcarrier tuyệt đối thay cho bias tương đối · Khối 3: ALiBi đối xứng thay cho bias có dấu | 95.62 | −1.18 | 96.64 | −1.33 | 95.52 | −1.77 | **6 hành động:** 43 lỗi, mức tụt lớn hơn ở 8 lớp. Nhóm ngồi/đứng/cúi tăng 8 → 21 (ngồi ↔ đứng 6 → 12). Bias có dấu giúp phân biệt các hành động ngược chiều thời gian. Thêm: nằm im ↔ phòng trống không đổi (13). Vì đổi cả hai khối cùng lúc, chưa biết phần đóng góp của Khối 2 và Khối 3 |
 | Khối 3 | wo_block3 | Khối 3 thay bằng trung bình 30 đoạn | 93.05 | −3.75 | 94.14 | **−3.83** | 92.29 | **−5.00** | **6 hành động:** 74 lỗi, tụt nhiều nhất. Ngồi ↔ đứng tăng 6 → 44 vì trung bình làm mất thứ tự thời gian. Khối 3 là thành phần quan trọng nhất cho hành động. Đi ↔ chạy không đổi (13): hoạt động lặp đều nhận được bằng trung bình. Thêm: nằm im ↔ phòng trống không đổi (14) |
-| Gộp | hybrid | Token chỉ có Conv → Khối 2 → `h_k` · thêm nhánh phổ trung bình qua (rx, sub) → Linear → `a_k` · gộp `Linear(2D → D)` trước Khối 3 | 95.63 | −1.17 | 96.72 | −1.25 | 95.63 | −1.66 | **6 hành động:** 42 lỗi. Đi ↔ chạy 28, tệ nhất trong các biến thể. Không kế thừa được ưu điểm của phổ trung bình. Thêm: chỉ giữ nhánh phổ khi test thì còn 24% (knock-out), tức nhánh Conv lấn át. Nằm im ↔ phòng trống tốt (14). Đang thử `hybrid_drop` |
+| Gộp | hybrid | Token chỉ có Conv → Khối 2 → `h_k` · thêm nhánh phổ trung bình qua (rx, sub) → Linear → `a_k` · gộp `Linear(2D → D)` trước Khối 3 | 95.63 | −1.17 | 96.72 | −1.25 | 95.63 | −1.66 | **6 hành động:** 42 lỗi. Đi ↔ chạy 28, tệ nhất trong các biến thể. Không kế thừa được ưu điểm của phổ trung bình. Thêm: chỉ giữ nhánh phổ khi test thì còn 24% (knock-out), tức nhánh Conv lấn át. Nằm im ↔ phòng trống tốt (14). Lỗi này được sửa ở `hybrid_drop` |
+| | **hybrid_drop** | Như `hybrid`, thêm modality dropout: khi train, zero toàn bộ `h_k` của một mẫu với xác suất 0.5 | **97.03** | **+0.23** | **98.67** | **+0.70** | **98.23** | **+0.94** | **6 hành động:** 17 lỗi, ít nhất trong mọi mô hình. Ngồi ↔ đứng 3, ngồi/đứng/cúi 5, đi ↔ chạy 11. Kết hợp được thứ tự thời gian của Khối 3 với phổ trung bình. Thêm: chỉ giữ phổ trung bình thì đạt 93.7% (`hybrid`: 24%), nên phổ đã thực sự được dùng. Phổ mang các hành động, nhánh Khối 2 mang trạng thái tĩnh. Nằm im ↔ phòng trống 21, kém mô hình đầy đủ. 8 lớp chỉ hơn 3 mẫu, cần thêm seed |
 | *Trường hợp đặc biệt* | *freq_mean (100 epoch)* | *Token chỉ có phổ + Khối 2 = trung bình, tức phổ trung bình qua (rx, sub) → Linear → Khối 3* | *95.47* | *−1.33* | *98.44* | *+0.47* | *98.12* | *+0.83* | ***6 hành động:** 18 lỗi, ít nhất, vượt mô hình đầy đủ. Đi ↔ chạy 8, so với 16 của wo_conv. Lấy trung bình phổ qua các kênh tốt hơn attention trên phổ từng kênh. Thêm: nằm im ↔ phòng trống 38. Chưa hội tụ (train 97.9%)* |
 | | *freq_mean_e200* | *Như freq_mean, train 200 epoch* | *96.41* | *−0.39* | *98.44* | *+0.47* | *98.02* | *+0.73* | ***6 hành động:** 19 lỗi, vẫn khoảng 98% dù train 99.8%. Lợi thế đến từ đặc trưng, không phải do chưa overfit. Thêm: nằm im ↔ phòng trống giảm còn 26 nhưng vẫn kém mô hình đầy đủ; ở 8 lớp chỉ còn kém 0.39. MACs ít hơn khoảng 60 lần. Mô hình đầy đủ chưa tận dụng được đặc trưng này* |
 
@@ -360,7 +389,11 @@ Split theo lần lặp, 1 seed. Δ so với mô hình đầy đủ. Số lỗi �
    - Lợi thế này không do train thiếu: ở 100 và 200 epoch, các hành động như nhau.
    - Điểm yếu duy nhất của nó là nằm im ↔ phòng trống (26 so với 15 lỗi). Đây là chỗ cần chọn kênh, tức cần Khối 2.
    - Ghép thẳng phổ trung bình vào mô hình (`hybrid`) không giúp được, vì nhánh Conv → Khối 2 lấn át (mục 5.5).
-   - Hướng giải quyết: `hybrid_drop` (đang chạy); nếu không đủ, xem xét dùng phổ trung bình làm luồng chính và Khối 2 chỉ phục vụ phân biệt trạng thái tĩnh.
+   - **Đã giải quyết một phần bằng `hybrid_drop`** (mục 5.5). Mô hình dùng được phổ trung bình cho các hành động (6 hành động 98.23%, cao nhất) và vẫn giữ Khối 2 cho trạng thái tĩnh.
+   - Còn lại hai việc:
+     - nằm im ↔ phòng trống tăng từ 15 lên 21 lỗi;
+     - đi ↔ chạy (11) vẫn kém `freq_mean` (7–8).
+   - Mức chênh ở 8 lớp (+3 mẫu) cần thêm seed. Hướng tiếp: thử các giá trị p khác, và train lâu hơn, vì mô hình chưa overfit ở epoch 100.
 6. **Mô hình đầy đủ overfit** (100% train từ khoảng epoch 50, val loss tăng sau đó). Các biến thể có dung lượng rất khác nhau phản ứng khác nhau với lịch train. `freq_mean` cần khoảng 200 epoch, mô hình đầy đủ khớp hết tập train sau khoảng 50 epoch. So sánh ở cùng 100 epoch vì vậy chưa hoàn toàn công bằng.
 
 ## 6. Kết luận
@@ -377,8 +410,10 @@ Trên SSHAR-ESP, WiFormer đạt 96.80% (97.29% trên 6 hành động), vượt 
 | ngồi ↔ đứng | Khối 3 (thứ tự thời gian), bias có dấu, góc nhìn dạng sóng |
 | nằm im ↔ phòng trống | góc nhìn dạng sóng, Khối 2 |
 
+Biến thể `hybrid_drop` ghép phổ trung bình theo từng đoạn và dùng modality dropout để nhánh phổ không bị nhánh Conv → Khối 2 lấn át. Nó đạt 97.03% (98.23% trên 6 hành động), cao nhất trong các mô hình, và hai nhánh tự phân vai: phổ trung bình mang các hành động, Khối 2 mang trạng thái tĩnh. Đây là ứng viên thay cho mô hình đầy đủ, nhưng cần thêm seed để xác nhận.
+
 Hướng tiếp theo:
 1. Đánh giá cross-user bằng 5 fold theo người, và thêm seed.
-2. Kết hợp phổ trung bình mà không mất khả năng phân biệt trạng thái tĩnh (`hybrid_drop`, đang chạy).
+2. `hybrid_drop`: thêm seed, thử các giá trị p khác, train lâu hơn; lấy lại độ chính xác ở nằm im ↔ phòng trống.
 3. Cải thiện góc nhìn phổ: cửa sổ Hann, nhúng phi tuyến.
 4. Khai thác vi chuyển động để phân biệt các trạng thái tĩnh mà không cần mức tĩnh.
