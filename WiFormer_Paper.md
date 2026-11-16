@@ -19,7 +19,7 @@ WiFormer xử lý lần lượt ba thang đó bằng ba khối, với ba ý tư�
 
 Ngoài ra, mô hình chuẩn hóa từng mẫu để bỏ mức tĩnh của từng kênh (dấu vân tay của môi trường và người), nhưng vẫn giữ độ mạnh tương đối giữa các subcarrier.
 
-Trên SSHAR-ESP (8 lớp, 3 RX ESP32), WiFormer đạt **96.80%** độ chính xác (6 hành động: **97.29%**), cao hơn CNN-GRU và BiMamba 1.5–1.9 điểm (6 hành động: 3.4–4.1 điểm). Ablation cho thấy mỗi thành phần đều có đóng góp, và mỗi thành phần ứng với một nhóm lỗi riêng, khớp với lý do thiết kế.
+Trên SSHAR-ESP (8 lớp, 3 RX ESP32), WiFormer đạt **96.80%** độ chính xác (6 hành động: **97.29%**), cao hơn CNN-GRU và BiMamba 1.5–1.9 điểm (6 hành động: 3.4–4.1 điểm). Ablation cho thấy mỗi thành phần đều có đóng góp, và mỗi thành phần ứng với một nhóm lỗi riêng. Khối 3 quan trọng nhất cho các hành động. Riêng với góc nhìn phổ, lấy trung bình qua các kênh tốt hơn attention ở các hành động, nhưng kém ở trạng thái tĩnh.
 
 ## 2. Các nghiên cứu liên quan
 
@@ -130,7 +130,7 @@ Thiết kế này có hai tính chất:
 | FFN | 4D |
 | Dropout | 0.1 |
 | Quy mô (ESP) | 449K tham số, 2.41 G MACs |
-| Chuẩn hóa trên UT-HAR | không chuẩn hóa trong mô hình (giữ min-max của loader), vì trên dữ liệu này mức tĩnh là thông tin quyết định (mục 5.5) |
+| Chuẩn hóa trên UT-HAR | không chuẩn hóa trong mô hình (giữ min-max của loader), vì trên dữ liệu này mức tĩnh là thông tin quyết định (mục 5.6) |
 
 ### 4.3 Huấn luyện
 
@@ -167,6 +167,14 @@ Mỗi biến thể thay đổi một thành phần, phần còn lại giữ nguy
 | `freq_mean` | Như `wo_conv`, nhưng Khối 2 = trung bình. Tương đương phổ trung bình qua (rx, s) |
 | `wo_block3` | Khối 3 = trung bình qua các đoạn |
 
+Ngoài ra có một biến thể mở rộng, thử ghép phổ trung bình vào mô hình (mục 5.5):
+
+| Biến thể | Thay đổi |
+|---|---|
+| `hybrid` | Mỗi đoạn có hai nhánh: token chỉ có `v_time` → Khối 2 → `h_k`; phổ `log(1+\|rfft\|)` trung bình qua (rx, s) → `Linear(W/2 → D)` → `a_k`. Gộp `Linear(2D → D)([h_k ‖ a_k])` rồi vào Khối 3 |
+| `hybrid_drop` | Như `hybrid`, thêm modality dropout: khi train, zero toàn bộ `h_k` của một mẫu với xác suất 0.5 |
+| `freq_mean_e200` | `freq_mean` train 200 epoch (cosine về 0 ở epoch 200) |
+
 ## 5. Kết quả và nhận xét
 
 ### 5.1 So sánh với baseline (SSHAR-ESP)
@@ -201,11 +209,13 @@ Số mẫu nhầm theo cặp lớp (tính cả hai chiều):
 | wo_block1 | 91.72 | **−5.08** | 96.02 | **−1.95** | 94.69 | **−2.60** | 405K | 0.53 G |
 | *Khối 2* | | | | | | | | |
 | wo_block2 | 94.61 | −2.19 | 97.42 | −0.55 | 96.56 | −0.73 | 349K | 1.91 G |
-| freq_mean | (bổ sung) | | | | | | 307K | 0.04 G |
+| freq_mean | 95.47 | −1.33 | **98.44** | **+0.47** | **98.12** | **+0.83** | 307K | 0.04 G |
 | *Mã hóa vị trí* | | | | | | | | |
 | abs_pos | 95.62 | −1.18 | 96.64 | −1.33 | 95.52 | −1.77 | 453K | 2.24 G |
 | *Khối 3* | | | | | | | | |
-| wo_block3 | (bổ sung) | | | | | | 149K | 2.40 G |
+| wo_block3 | 93.05 | **−3.75** | 94.14 | **−3.83** | 92.29 | **−5.00** | 149K | 2.40 G |
+| *Mở rộng* | | | | | | | | |
+| hybrid | 95.63 | −1.17 | 96.72 | −1.25 | 95.63 | −1.66 | 453K | 2.38 G |
 
 Số mẫu nhầm theo cặp lớp:
 
@@ -217,6 +227,9 @@ Số mẫu nhầm theo cặp lớp:
 | wo_block1 | 14 | 19 | 24 | 55 | 106 |
 | wo_block2 | 11 | 14 | 18 | 36 | 69 |
 | abs_pos | 12 | 21 | 20 | 13 | 56 |
+| freq_mean | 8 | 9 | **8** | 38 | 58 |
+| wo_block3 | **44** | **55** | 13 | 14 | 89 |
+| hybrid | 11 | 12 | 28 | 14 | 56 |
 
 ### 5.3 Mô hình dựa vào góc nhìn nào
 
@@ -246,7 +259,12 @@ Số mẫu nhầm theo cặp lớp:
 **H3: Attention không gian tốt hơn trung bình. Xác nhận một phần.**
 - `wo_block2` tụt 2.19 điểm ở 8 lớp, nhưng chỉ 0.55–0.73 điểm ở 7 lớp và 6 hành động. Lỗi tăng chủ yếu ở nằm im ↔ phòng trống (15 lên 36).
 - Trên split theo lần lặp, đóng góp chính của Khối 2 là **chọn kênh mang vết của các dao động nhỏ**, vốn chỉ hiện ở một số subcarrier và RX.
-- Với riêng góc nhìn phổ, câu hỏi "attention trên phổ từng subcarrier hay lấy trung bình phổ" được trả lời bằng `freq_mean` so với `wo_conv` (bổ sung).
+- Với riêng góc nhìn phổ (`freq_mean` so với `wo_conv`), kết quả **ngược giả thuyết ở các hành động**:
+  - lấy trung bình phổ tốt hơn attention trên phổ từng subcarrier: 6 hành động 98.12 so với 96.35, đi ↔ chạy 8 so với 16 lỗi; ở 7 lớp và 6 hành động còn cao hơn cả mô hình đầy đủ;
+  - nhưng kém ở nằm im ↔ phòng trống (38 so với 27 lỗi).
+- Cách giải thích hợp lý: tần số Doppler gần như giống nhau trên mọi subcarrier, nên trung bình 168 periodogram cho ước lượng ổn định hơn. Ngược lại, vết của trạng thái tĩnh chỉ nằm ở một số kênh, nên cần chọn kênh.
+- `freq_mean` **chưa hội tụ ở epoch 100** (train 97.9%, val vẫn tăng, epoch tốt nhất 98), trong khi mô hình đầy đủ đạt 100% train từ khoảng epoch 50. Vì vậy chưa tách được hai nguyên nhân: phổ trung bình mang thông tin tốt hơn, hay mô hình nhỏ chưa overfit. `freq_mean_e200` sẽ trả lời câu hỏi này.
+- **Kết luận:** H3 đúng cho trạng thái tĩnh, sai cho góc nhìn phổ ở các hành động.
 
 **H4: Bias tương đối có dấu. Được xác nhận.**
 - `abs_pos` giữ nguyên Khối 1, chuẩn hóa, quy mô và cách huấn luyện, chỉ đổi cơ chế mã hóa vị trí. Nó tụt 1.18 điểm ở 8 lớp.
@@ -254,19 +272,47 @@ Số mẫu nhầm theo cặp lớp:
 - Lỗi tăng mạnh nhất ở nội bộ ngồi xuống / đứng lên / cúi nhặt (8 lên 21), trong đó ngồi ↔ đứng tăng từ 6 lên 12. Đây đúng là các hành động gần như đối xứng gương theo thời gian, mà bias đối xứng không phân biệt được.
 - Chưa tách được phần đóng góp của Khối 2 và Khối 3 trong biến thể này.
 
-**H5: Khối 3.** (bổ sung)
+**H5: Khối 3 là cần thiết. Được xác nhận, và là thành phần quan trọng nhất cho các hành động.**
+- `wo_block3` tụt nhiều nhất ở 6 hành động (−5.00) và 7 lớp (−3.83).
+- Lỗi ngồi ↔ đứng tăng từ 6 lên 44. Trung bình qua các đoạn bất biến với thứ tự thời gian, nên không phân biệt được hai hành động gần như đối xứng gương theo thời gian. Kết quả này cũng củng cố H4.
+- Đi ↔ chạy (13) và nằm im ↔ phòng trống (14) không xấu đi. Hoạt động lặp đều và trạng thái tĩnh nhận được bằng thống kê trung bình theo thời gian.
+- Khối 3 chiếm 300K trong 449K tham số nhưng rất ít MACs. Gần như toàn bộ chi phí tính nằm ở Khối 1.
 
 **Thứ tự tác động trên 6 hành động:**
 
 | Thành phần bị bỏ | Δ (6 hành động) |
 |---|---|
+| Khối 3 | −5.00 |
 | Khối 1 | −2.60 |
 | Mã hóa vị trí tương đối | −1.77 |
 | Góc nhìn thời gian | −1.04 |
 | Góc nhìn phổ | −0.94 |
 | Khối 2 | −0.73 |
 
-### 5.5 UT-HAR
+### 5.5 Ghép phổ trung bình vào mô hình (`hybrid`)
+
+Mục tiêu: giữ ưu điểm của phổ trung bình ở các hành động (`freq_mean`) và ưu điểm của Khối 2 ở trạng thái tĩnh.
+
+**Kết quả: không đạt.** Nằm im ↔ phòng trống tốt (14 lỗi), nhưng đi ↔ chạy xấu nhất trong các biến thể (28 lỗi). Tổng thể (95.63%) gần bằng `wo_fft`.
+
+Knock-out tại lớp gộp theo đoạn (chuẩn trọng số: nhánh Khối 2 6.71, nhánh phổ trung bình 9.44):
+
+| Recall (%) | ngồi xuống | đứng lên | cúi nhặt | ngã | nằm im | đi | chạy | phòng trống | Acc |
+|---|---|---|---|---|---|---|---|---|---|
+| Cả hai | 97.5 | 94.4 | 99.4 | 100 | 92.5 | 92.5 | 90.0 | 98.8 | 95.6 |
+| Chỉ phổ trung bình | 0.0 | 0.6 | 25.0 | 0.0 | 0.0 | 56.9 | 12.5 | 100 | 24.4 |
+| Chỉ nhánh Khối 2 | 76.9 | 96.3 | 73.8 | 100 | 18.8 | 96.9 | 76.3 | 63.8 | 75.3 |
+
+**Nhận xét**
+- Mô hình gần như chỉ dựa vào nhánh Conv → Khối 2. Nhánh phổ trung bình tự nó gần như không phân loại được, dù chuẩn trọng số lớn hơn.
+- Nhánh Conv → Khối 2 đạt 100% train từ khoảng epoch 50. Sau đó loss gần 0, nên nhánh phổ trung bình hầu như không còn được học. Đây là hiện tượng cạnh tranh giữa các nguồn khi train chung (Wang et al., CVPR 2020; Wu et al., ICML 2022).
+- Do đó, ghép thêm phổ trung bình bằng một lớp tuyến tính **không chuyển được** lợi thế của `freq_mean`.
+
+**Tiếp theo: `hybrid_drop`** (modality dropout, Neverova et al., ModDrop 2016). Ép Khối 3 đọc được `a_k` mà không thêm tham số hay loss.
+- Nếu knock-out "chỉ phổ trung bình" tăng và đi ↔ chạy giảm: thất bại của `hybrid` do cạnh tranh nhánh.
+- Nếu knock-out tăng nhưng đi ↔ chạy không giảm: lợi thế của `freq_mean` đến từ việc mô hình nhỏ chưa overfit, không từ nội dung phổ trung bình.
+
+### 5.6 UT-HAR
 
 | Mô hình | Acc | F1 |
 |---|---|---|
@@ -278,7 +324,7 @@ Số mẫu nhầm theo cặp lớp:
 - Trên UT-HAR, bỏ mức tĩnh làm mất 22 điểm. Mức tĩnh ở đây có thể mang thông tin về lớp (ví dụ tư thế cuối của nằm xuống, ngồi xuống), không chỉ là dấu vân tay môi trường. Lựa chọn chuẩn hóa vì vậy phụ thuộc dữ liệu.
 - Ở cấu hình phù hợp, WiFormer vẫn kém AMCS-TCN khoảng 4 điểm (WiFormer chỉ 1 seed, không dùng trọng số lớp).
 
-### 5.6 Hạn chế
+### 5.7 Hạn chế
 
 1. **Chỉ có split theo lần lặp.** Val gần bão hòa (97–98%), nên chênh lệch giữa các biến thể nhỏ. Lợi ích chính của chuẩn hóa từng mẫu và của Khối 2 được kỳ vọng ở **cross-user**, nhưng chưa được đánh giá. Cần kiểm định chéo 5 fold theo người, mỗi người được test đúng một lần.
 2. **Một seed.** Các chênh lệch dưới 1 điểm (khoảng 10 mẫu) cần thêm seed để khẳng định.
@@ -286,6 +332,8 @@ Số mẫu nhầm theo cặp lớp:
 4. **Nằm im ↔ phòng trống** là nguồn lỗi lớn nhất còn lại (15/41).
    - Phân biệt có nguyên tắc cần vi chuyển động như nhịp thở (0.2–0.5 Hz).
    - Độ phân giải phổ của một đoạn (fs/W = 3.125 Hz) không thấy được nhịp này; chỉ Khối 3 có thể học qua biến thiên giữa các đoạn.
+   - Nhưng `wo_block3` cho cùng số lỗi ở cặp này (14 so với 15), nên Khối 3 hiện chưa khai thác được thông tin đó.
+5. **Mô hình đầy đủ overfit** (100% train từ khoảng epoch 50, val loss tăng sau đó), trong khi `freq_mean` chưa hội tụ ở epoch 100. So sánh giữa các biến thể có dung lượng rất khác nhau vì vậy chịu ảnh hưởng của lịch train.
 
 ## 6. Kết luận
 
@@ -297,12 +345,12 @@ Trên SSHAR-ESP, WiFormer đạt 96.80% (97.29% trên 6 hành động), vượt 
 
 | Nhóm lỗi | Thành phần chịu trách nhiệm |
 |---|---|
-| đi ↔ chạy | góc nhìn phổ |
-| ngồi ↔ đứng | bias có dấu, góc nhìn dạng sóng |
+| đi ↔ chạy | góc nhìn phổ (phổ trung bình qua các kênh còn tốt hơn phổ từng kênh) |
+| ngồi ↔ đứng | Khối 3 (thứ tự thời gian), bias có dấu, góc nhìn dạng sóng |
 | nằm im ↔ phòng trống | góc nhìn dạng sóng, Khối 2 |
 
 Hướng tiếp theo:
 1. Đánh giá cross-user bằng 5 fold theo người, và thêm seed.
-2. Hoàn thiện ablation Khối 3 và `freq_mean`.
+2. Kết hợp phổ trung bình mà không mất khả năng phân biệt trạng thái tĩnh: `hybrid_drop`, `freq_mean_e200` (đang chạy).
 3. Cải thiện góc nhìn phổ: cửa sổ Hann, nhúng phi tuyến.
 4. Khai thác vi chuyển động để phân biệt các trạng thái tĩnh mà không cần mức tĩnh.

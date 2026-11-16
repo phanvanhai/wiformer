@@ -109,6 +109,7 @@ Ghi chú:
 | `wo_block2` | 348,896 | 1.905 G | 347,679 | 0.257 G |
 | `wo_block3` | 148,952 | 2.399 G | 147,759 | 0.379 G |
 | `freq_mean` | 307,136 | 0.040 G | | |
+| `hybrid`, `hybrid_drop` | 453,328 | 2.378 G | | |
 
 Góc nhìn phổ chỉ tốn khoảng 6K tham số và 31M MACs. Gần như toàn bộ MACs nằm ở Conv của Khối 1.
 
@@ -136,6 +137,9 @@ Knock-out không giống train riêng một góc nhìn: mô hình chưa từng t
 | `wo_block2` | Khối 2 = trung bình R·S token của đoạn |
 | `wo_block3` | Khối 3 = trung bình qua các cửa sổ |
 | `freq_mean` | `wo_conv` + `wo_block2`: chỉ phổ, trung bình R·S token (= phổ trung bình qua rx, sub). So với `wo_conv` |
+| `hybrid` | Mỗi window hai nhánh: token chỉ Conv → Khối 2 → `h_k`; phổ `log1p\|rfft\|` trung bình qua (rx, sub) → `Linear(W/2 → D)` → `a_k`. `Linear(2D → D)([h_k ‖ a_k])` → Khối 3. Knock-out trong `view_contribution.json` tính trên lớp gộp này (time = `h_k`, freq = `a_k`) |
+| `hybrid_drop` | `hybrid` + `--mod_drop=0.5`: khi train, zero toàn bộ `h_k` của một mẫu với xác suất 0.5 |
+| `freq_mean_e200` | `freq_mean`, 200 epoch (EXTRA không được đặt `--epochs`) |
 | `nonorm` | `full` với `--norm=none`. Dùng cho UT-HAR (giữ mức tĩnh từng kênh) |
 
 Biến thể `abs_pos` trong paper (mã hóa vị trí tuyệt đối/ALiBi) được chạy bằng `--model=wiformer` (v2, cùng chuẩn hóa và công thức train với v4).
