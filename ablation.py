@@ -141,6 +141,12 @@ V4_VARIANTS = {
     # two branches per window: Conv tokens -> Block 2, and the averaged spectrum; fused before Block 3
     "hybrid": ("Fusion", "[Conv -> Block 2] + averaged spectrum, fused per window",
                ["--v4_ablation=hybrid"]),
+    # hybrid + modality dropout: zero the Block 2 branch with p = 0.5 during training
+    "hybrid_drop": ("Fusion", "hybrid + modality dropout on h_k (p = 0.5, training only)",
+                    ["--v4_ablation=hybrid", "--mod_drop=0.5"]),
+    # freq_mean trained 200 epochs (cosine to 0 at 200): has freq_mean converged at 100?
+    "freq_mean_e200": ("Block 2", "freq_mean, 200 epochs (EXTRA must not set --epochs)",
+                       ["--v4_ablation=freq_mean", "--epochs=200"]),
     # UT_HAR: no per-sample normalisation inside the model (keep the static level)
     "nonorm": ("Norm", "No per-sample normalisation in the model (keep static level)",
                ["--v4_ablation=full", "--norm=none"]),

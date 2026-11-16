@@ -329,14 +329,17 @@ class WindowFusion(nn.Module):
     spectral : log1p|rfft(W)| without DC (W//2 bins), mean over the R*S channels of a
                window -> Linear(W//2, D) -> a_k
     fuse     : Linear(2D, D) on [h_k || a_k]   (h_k = Block 2 output of the Conv tokens)
+    mod_drop : training only, zero h (the whole sequence of a sample) with probability
+               mod_drop, so Block 3 must also learn to read a_k (modality dropout)
     `knock` ("time" / "freq" / None) zeroes one branch at inference (analysis only).
     """
 
-    def __init__(self, window, d_model):
+    def __init__(self, window, d_model, mod_drop=0.0):
         super().__init__()
         self.n_bins = window // 2
         self.proj_freq = nn.Linear(self.n_bins, d_model)
         self.fuse = nn.Linear(2 * d_model, d_model)
+        self.mod_drop = mod_drop
         self.knock = None
 
     def forward(self, h, seg):
@@ -344,6 +347,9 @@ class WindowFusion(nn.Module):
         spec = torch.fft.rfft(seg.float(), dim=-1).abs()
         spec = torch.log1p(spec)[..., 1:1 + self.n_bins].mean(dim=(1, 2)).to(h.dtype)   # (B, K, n_bins)
         a = self.proj_freq(spec)
+        if self.training and self.mod_drop > 0:
+            keep = torch.rand(h.shape[0], 1, 1, device=h.device) >= self.mod_drop
+            h = h * keep.to(h.dtype)
         if self.knock == "time":
             h = torch.zeros_like(h)
         elif self.knock == "freq":
@@ -382,6 +388,7 @@ class WiFormerV4(BaseModel):
         norm_first=True,
         ablation="full",
         norm="sub",
+        mod_drop=0.0,
         **kwargs,
     ):
         super().__init__(input_shape=input_shape, num_classes=num_classes)
@@ -389,6 +396,8 @@ class WiFormerV4(BaseModel):
             raise ValueError(f"WiFormerV4: ablation must be one of {ABLATIONS}, got '{ablation}'")
         if norm not in ("sub", "none"):
             raise ValueError(f"WiFormerV4: norm must be 'sub' or 'none', got '{norm}'")
+        if mod_drop and ablation != "hybrid":
+            raise ValueError("WiFormerV4: mod_drop is only used by ablation 'hybrid'")
         self.ablation = ablation
         self.norm = norm
 
@@ -424,7 +433,7 @@ class WiFormerV4(BaseModel):
         self.n_win = (T - window) // stride + 1
         dur = f"{window / self.fs:.3f} s" if self.fs else "fs unknown"
         print(f"[WiFormerV4] window W={window} ({dur}), stride={stride}, n_win={self.n_win}, "
-              f"norm={norm}, ablation={ablation}")
+              f"norm={norm}, ablation={ablation}" + (f", mod_drop={mod_drop}" if mod_drop else ""))
 
         k2_ff = k2_ff or 4 * d_model
         k3_ff = k3_ff or 4 * d_model
@@ -440,7 +449,7 @@ class WiFormerV4(BaseModel):
             pool=ablation in ("wo_block2", "freq_mean"),
         )
         # hybrid: averaged-spectrum branch fused with Block 2 output per window
-        self.win_fusion = WindowFusion(window, d_model) if ablation == "hybrid" else None
+        self.win_fusion = WindowFusion(window, d_model, mod_drop) if ablation == "hybrid" else None
         self.block3 = TemporalTransformer(
             self.n_win, d_model, k3_heads, 0 if ablation == "wo_block3" else k3_layers,
             k3_ff, dropout, activation, norm_first,

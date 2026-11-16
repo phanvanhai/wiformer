@@ -348,6 +348,9 @@ def parse_args():
                         help="WiFormer v4 core ablation (Block 1 views / remove one block); "
                              "freq_mean = spectral view only + mean over Rx x Sub; "
                              "hybrid = [Conv -> Block 2] fused per window with the averaged spectrum")
+    parser.add_argument("--mod_drop", type=float, default=0.0,
+                        help="WiFormer v4 hybrid: training-only probability of zeroing the Block 2 "
+                             "branch h_k (per sample), so the averaged-spectrum branch is also used")
     parser.add_argument("--norm", type=str, default="sub", choices=["sub", "none"],
                         help="WiFormer v4 per-sample normalisation: sub = minus mean per (rx, sub), / std per rx "
                              "(default); none = keep the loader's input (UT_HAR: per-sample min-max), "
@@ -570,6 +573,7 @@ def main():
         model_kwargs.update(
             ablation=args.v4_ablation,
             norm=args.norm,
+            mod_drop=args.mod_drop,
             window_sec=args.window_sec,
             fs=args.fs,
             window=args.window,

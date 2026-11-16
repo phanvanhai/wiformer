@@ -29,6 +29,10 @@
 #              -> attention chọn phổ từng sub hay lấy trung bình phổ tốt hơn (~40-50 phút)
 #   hybrid     mỗi window 2 nhánh: token Conv -> Khối 2 (attention) và phổ trung bình qua (rx, sub);
 #              gộp Linear(2D -> D) theo window rồi vào Khối 3 (~3.3 h)
+#   hybrid_drop    hybrid + modality dropout: khi train zero nhánh Khối 2 (h_k) với p = 0.5
+#                  (theo mẫu) -> buộc Khối 3 đọc cả phổ trung bình (~3.3 h)
+#   freq_mean_e200 freq_mean train 200 epoch (cosine về 0 ở epoch 200), ~1.4 h.
+#                  EXTRA KHÔNG được đặt --epochs (EXTRA ghi đè tham số của biến thể)
 #   nonorm     full, không chuẩn hoá theo mẫu trong mô hình -> dùng cho UT_HAR
 #
 # VARIANTS (wiformer v2, MODEL = 'wiformer'; python ablation.py --list)
@@ -41,7 +45,7 @@
 #
 # EXTRA (tham số thêm cho main.py, áp dụng cho mọi biến thể trong VARIANTS)
 #   Huấn luyện
-#     --epochs=100            số epoch (vd --epochs=2 để chạy thử)
+#     --epochs=100            số epoch (mặc định 100; vd --epochs=2 để chạy thử)
 #     --patience=0            dừng sớm sau N epoch val không tăng (mặc định 0 = tắt)
 #     --lr=1e-3  --optimizer=adam|adamw  --weight_decay=0  --batch_size=32  --warmup_epochs=5
 #     --class_weights=auto    CE có trọng số: 'auto' (nghịch tần suất tập train) hoặc
@@ -54,6 +58,7 @@
 #     --window=64 --stride=32 đặt trực tiếp theo số mẫu (ghi đè window_sec)
 #     --fs=200                tần số lấy mẫu (mặc định sshar_esp 200 Hz, ut_har 125 Hz)
 #   Kiến trúc (v4)
+#     --mod_drop=0.5          hybrid: xác suất zero nhánh h_k khi train (mặc định 0)
 #     --norm=sub|none         sub = trừ mean theo (rx, sub), chia std theo rx (mặc định);
 #                             none = không chuẩn hoá trong mô hình (biến thể nonorm)
 #     --k2_layers=2 --k3_layers=6   số lớp Khối 2 / Khối 3
@@ -103,8 +108,8 @@ MODEL      = 'wiformer_v4'   # wiformer_v4 | wiformer (v2)
 DATASET    = 'sshar_esp'     # sshar_esp | ut_har
 SPLIT_MODE = 'repeat'        # repeat | user | position (đều 6:2:2) ; ut_har: bỏ qua
 CASE       = 0               # chỉ dùng cho user (0..4) / position (0..3)
-VARIANTS   = ['full']   # danh sách đầy đủ: xem "CÁC TUỲ CHỌN" ở đầu file
-EXTRA      = '--epochs=100'        # xem "CÁC TUỲ CHỌN"; vd '--epochs=2' để chạy thử
+VARIANTS   = ['hybrid_drop', 'freq_mean_e200']   # danh sách đầy đủ: xem "CÁC TUỲ CHỌN" ở đầu file
+EXTRA      = ''              # xem "CÁC TUỲ CHỌN"; mặc định 100 epoch; vd '--epochs=2' để chạy thử
 RUN_TAG    = 'ablation_v4'
 PREV_RESULTS = ''            # vd '/kaggle/input/<output-phien-truoc>/results/ablation_v4'
 
