@@ -210,6 +210,7 @@ Số mẫu nhầm theo cặp lớp (tính cả hai chiều):
 | *Khối 2* | | | | | | | | |
 | wo_block2 | 94.61 | −2.19 | 97.42 | −0.55 | 96.56 | −0.73 | 349K | 1.91 G |
 | freq_mean | 95.47 | −1.33 | **98.44** | **+0.47** | **98.12** | **+0.83** | 307K | 0.04 G |
+| freq_mean_e200 | 96.41 | −0.39 | **98.44** | **+0.47** | **98.02** | **+0.73** | 307K | 0.04 G |
 | *Mã hóa vị trí* | | | | | | | | |
 | abs_pos | 95.62 | −1.18 | 96.64 | −1.33 | 95.52 | −1.77 | 453K | 2.24 G |
 | *Khối 3* | | | | | | | | |
@@ -228,6 +229,7 @@ Số mẫu nhầm theo cặp lớp:
 | wo_block2 | 11 | 14 | 18 | 36 | 69 |
 | abs_pos | 12 | 21 | 20 | 13 | 56 |
 | freq_mean | 8 | 9 | **8** | 38 | 58 |
+| freq_mean_e200 | 8 | 11 | **7** | 26 | 46 |
 | wo_block3 | **44** | **55** | 13 | 14 | 89 |
 | hybrid | 11 | 12 | 28 | 14 | 56 |
 
@@ -263,7 +265,8 @@ Số mẫu nhầm theo cặp lớp:
   - lấy trung bình phổ tốt hơn attention trên phổ từng subcarrier: 6 hành động 98.12 so với 96.35, đi ↔ chạy 8 so với 16 lỗi; ở 7 lớp và 6 hành động còn cao hơn cả mô hình đầy đủ;
   - nhưng kém ở nằm im ↔ phòng trống (38 so với 27 lỗi).
 - Cách giải thích hợp lý: tần số Doppler gần như giống nhau trên mọi subcarrier, nên trung bình 168 periodogram cho ước lượng ổn định hơn. Ngược lại, vết của trạng thái tĩnh chỉ nằm ở một số kênh, nên cần chọn kênh.
-- `freq_mean` **chưa hội tụ ở epoch 100** (train 97.9%, val vẫn tăng, epoch tốt nhất 98), trong khi mô hình đầy đủ đạt 100% train từ khoảng epoch 50. Vì vậy chưa tách được hai nguyên nhân: phổ trung bình mang thông tin tốt hơn, hay mô hình nhỏ chưa overfit. `freq_mean_e200` sẽ trả lời câu hỏi này.
+- `freq_mean` **chưa hội tụ ở epoch 100** (train 97.9%, val vẫn tăng, epoch tốt nhất 98), trong khi mô hình đầy đủ đạt 100% train từ khoảng epoch 50. Câu hỏi đặt ra: lợi thế đến từ phổ trung bình mang thông tin tốt hơn, hay chỉ vì mô hình nhỏ chưa overfit?
+- `freq_mean_e200` (200 epoch, train 99.8%) trả lời câu hỏi này: các hành động **giữ nguyên** (6 hành động 98.02%, đi ↔ chạy 7 lỗi). Như vậy lợi thế đến từ chính đặc trưng phổ trung bình, không phải từ việc chưa overfit. Train lâu hơn chỉ cải thiện nằm im ↔ phòng trống (38 → 26 lỗi), nhưng vẫn kém mô hình đầy đủ (15).
 - **Kết luận:** H3 đúng cho trạng thái tĩnh, sai cho góc nhìn phổ ở các hành động.
 
 **H4: Bias tương đối có dấu. Được xác nhận.**
@@ -310,7 +313,7 @@ Knock-out tại lớp gộp theo đoạn (chuẩn trọng số: nhánh Khối 2 
 
 **Tiếp theo: `hybrid_drop`** (modality dropout, Neverova et al., ModDrop 2016). Ép Khối 3 đọc được `a_k` mà không thêm tham số hay loss.
 - Nếu knock-out "chỉ phổ trung bình" tăng và đi ↔ chạy giảm: thất bại của `hybrid` do cạnh tranh nhánh.
-- Nếu knock-out tăng nhưng đi ↔ chạy không giảm: lợi thế của `freq_mean` đến từ việc mô hình nhỏ chưa overfit, không từ nội dung phổ trung bình.
+- Nếu knock-out tăng nhưng đi ↔ chạy không giảm: vấn đề nằm ở cách gộp. `freq_mean_e200` đã cho thấy phổ trung bình tự nó mang thông tin tốt cho các hành động (mục 5.4, H3).
 
 ### 5.6 UT-HAR
 
@@ -333,7 +336,13 @@ Knock-out tại lớp gộp theo đoạn (chuẩn trọng số: nhánh Khối 2 
    - Phân biệt có nguyên tắc cần vi chuyển động như nhịp thở (0.2–0.5 Hz).
    - Độ phân giải phổ của một đoạn (fs/W = 3.125 Hz) không thấy được nhịp này; chỉ Khối 3 có thể học qua biến thiên giữa các đoạn.
    - Nhưng `wo_block3` cho cùng số lỗi ở cặp này (14 so với 15), nên Khối 3 hiện chưa khai thác được thông tin đó.
-5. **Mô hình đầy đủ overfit** (100% train từ khoảng epoch 50, val loss tăng sau đó), trong khi `freq_mean` chưa hội tụ ở epoch 100. So sánh giữa các biến thể có dung lượng rất khác nhau vì vậy chịu ảnh hưởng của lịch train.
+5. **Mô hình đầy đủ chưa tận dụng được đặc trưng tốt nhất cho các hành động.** Đây là vấn đề chính cần giải quyết.
+   - Một mô hình rất nhỏ chỉ dùng phổ trung bình qua (rx, s) (`freq_mean_e200`: 307K tham số, 0.04 G MACs, ít hơn khoảng 60 lần) vượt mô hình đầy đủ ở 7 lớp (98.44 so với 97.97) và 6 hành động (98.02 so với 97.29), và chỉ kém 0.39 điểm ở 8 lớp.
+   - Lợi thế này không do train thiếu: ở 100 và 200 epoch, các hành động như nhau.
+   - Điểm yếu duy nhất của nó là nằm im ↔ phòng trống (26 so với 15 lỗi). Đây là chỗ cần chọn kênh, tức cần Khối 2.
+   - Ghép thẳng phổ trung bình vào mô hình (`hybrid`) không giúp được, vì nhánh Conv → Khối 2 lấn át (mục 5.5).
+   - Hướng giải quyết: `hybrid_drop` (đang chạy); nếu không đủ, xem xét dùng phổ trung bình làm luồng chính và Khối 2 chỉ phục vụ phân biệt trạng thái tĩnh.
+6. **Mô hình đầy đủ overfit** (100% train từ khoảng epoch 50, val loss tăng sau đó). Các biến thể có dung lượng rất khác nhau phản ứng khác nhau với lịch train. `freq_mean` cần khoảng 200 epoch, mô hình đầy đủ khớp hết tập train sau khoảng 50 epoch. So sánh ở cùng 100 epoch vì vậy chưa hoàn toàn công bằng.
 
 ## 6. Kết luận
 
@@ -351,6 +360,6 @@ Trên SSHAR-ESP, WiFormer đạt 96.80% (97.29% trên 6 hành động), vượt 
 
 Hướng tiếp theo:
 1. Đánh giá cross-user bằng 5 fold theo người, và thêm seed.
-2. Kết hợp phổ trung bình mà không mất khả năng phân biệt trạng thái tĩnh: `hybrid_drop`, `freq_mean_e200` (đang chạy).
+2. Kết hợp phổ trung bình mà không mất khả năng phân biệt trạng thái tĩnh (`hybrid_drop`, đang chạy).
 3. Cải thiện góc nhìn phổ: cửa sổ Hann, nhúng phi tuyến.
 4. Khai thác vi chuyển động để phân biệt các trạng thái tĩnh mà không cần mức tĩnh.
