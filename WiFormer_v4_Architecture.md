@@ -96,6 +96,81 @@ Ghi chú:
 - **Bỏ bin DC:** mức tĩnh của đoạn chỉ nằm ở bin DC, nên góc nhìn phổ chỉ mang thông tin dao động. Với `norm=none` (UT-HAR), mức tĩnh vẫn đi vào mô hình qua góc nhìn thời gian.
 - **Độ phân giải phổ:** fs/W = 3.125 Hz trên ESP, khoảng 3.9 Hz trên UT-HAR. Cửa sổ chữ nhật.
 
+### Hình 3 — Khối 2: attention RX × subcarrier trong từng window
+
+```plantuml
+@startuml
+skinparam defaultFontName Arial
+skinparam ActivityBackgroundColor #FFF3E0
+skinparam ActivityBorderColor #555555
+skinparam ArrowColor #555555
+title Khối 2 — mỗi window là một chuỗi riêng, trọng số dùng chung cho mọi window
+
+start
+:Token từ Khối 1
+(B, 3, 30, 56, D);
+:permute + gộp (batch, window)
+mỗi window k: R·S = 3·56 = 168 token
+(B·30, 168, D);
+:ghép CLS (vector học được) ở vị trí 0
+(B·30, 169, D);
+:Bias attention (H, 169, 169), học được, dùng chung cho 2 lớp
+  token cùng RX (r = r′)  : b_sub[h, |s − s′|]   (56 giá trị / head)
+  token khác RX (r ≠ r′)  : c_cross[h]           (1 giá trị / head)
+  CLS → token · token → CLS · CLS → CLS : 3 giá trị / head
+không có embedding vị trí tuyệt đối, không có danh tính RX
+-> bất biến khi hoán vị RX;
+repeat :Lớp Transformer (pre-norm) — ×2
+  x = x + Dropout(Wo · softmax(QKᵀ/√d + bias) · V)   [LayerNorm trước, H = 4 head]
+  x = x + Dropout(FFN(LayerNorm(x)))                FFN: D → 4D → D, GELU;
+repeat while (lớp tiếp theo?)
+:lấy CLS
+h_k (B·30, D) → reshape (B, 30, D);
+stop
+@enduml
+```
+
+Ghi chú:
+- Bias chỉ phụ thuộc vào **quan hệ** giữa hai token (cùng RX hay khác RX, khoảng cách subcarrier), không phụ thuộc vào vị trí tuyệt đối. Vì vậy mô hình không biết RX nào là RX nào. `rx_permutation.json` kiểm tra điều này.
+- `wo_block2` / `freq_mean`: thay toàn bộ khối bằng trung bình 168 token, `(B·30, 168, D) → (B·30, D)`.
+
+### Hình 4 — Khối 3: Transformer thời gian
+
+```plantuml
+@startuml
+skinparam defaultFontName Arial
+skinparam ActivityBackgroundColor #E8F5E9
+skinparam ActivityBorderColor #555555
+skinparam ArrowColor #555555
+title Khối 3 — attention giữa các window
+
+start
+:h_1 .. h_30 từ Khối 2
+(hybrid: z_k = Linear(2D → D)([h_k ‖ a_k]))
+(B, 30, D);
+:ghép CLS (vector học được) ở vị trí 0
+(B, 31, D);
+:Bias attention (H, 31, 31), học được, dùng chung cho 6 lớp
+  window i với window j : b[h, i − j], i − j ∈ {−29, …, 29}   (59 giá trị / head, có dấu)
+  CLS → token · token → CLS · CLS → CLS : 3 giá trị / head
+b[h, +d] ≠ b[h, −d] -> phân biệt "trước" và "sau";
+repeat :Lớp Transformer (pre-norm) — ×6
+  x = x + Dropout(Wo · softmax(QKᵀ/√d + bias) · V)   [H = 4 head]
+  x = x + Dropout(FFN(LayerNorm(x)))                FFN: D → 4D → D, GELU;
+repeat while (lớp tiếp theo?)
+:lấy CLS
+(B, D);
+:Classifier: LayerNorm · Dropout · Linear(D → C)
+(B, C);
+stop
+@enduml
+```
+
+Ghi chú:
+- Bias có dấu cho phép một head chỉ nhìn về quá khứ hoặc về tương lai. Một bias đối xứng theo `|i − j|` không làm được điều này.
+- `wo_block3`: thay toàn bộ khối bằng trung bình 30 window, `(B, 30, D) → (B, D)`. Phép trung bình bất biến với thứ tự thời gian.
+- Bias học được ghi vào `block3_bias.json` sau khi train.
+
 ## 2. Tham số và MACs
 
 Đo bằng `thop` (một mẫu, inference). `thop` không đếm FFT và phép nhân ma trận bên trong attention, chỉ đếm các lớp Linear/Conv.
