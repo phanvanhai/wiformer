@@ -22,7 +22,8 @@
 #   full       v5: mỗi khoảnh khắc (window) 2 nhánh: hình dạng (Conv -> Khối 2) + tốc độ (phổ Hann
 #              trung bình qua rx, sub), gộp Linear(2D -> D), modality dropout 0.5 -> Khối 3 (~3.3 h ESP)
 #              (= wiformer_v4 hybrid_drop + Hann)
-#   rect       full, nhánh tốc độ không dùng cửa sổ Hann (= wiformer_v4 hybrid_drop)
+#   gate       full, gộp bằng cổng vô hướng mỗi khoảnh khắc: g = sigmoid(w.[h||a] + b),
+#              z = g h + (1 - g) a (h, a qua LayerNorm), vẫn modality dropout 0.5; lưu gate.json
 #   wo_shape   chỉ nhánh tốc độ (phổ Hann) -> Khối 3 (~1 h ESP)
 #
 # VARIANTS (wiformer_v4, xem: python ablation.py --model=wiformer_v4 --list)
@@ -117,7 +118,7 @@ MODEL      = 'wiformer_v5'   # wiformer_v5 | wiformer_v4 | wiformer (v2)
 DATASET    = 'sshar_esp'     # sshar_esp | ut_har
 SPLIT_MODE = 'user'          # repeat | user | position (đều 6:2:2) ; ut_har: bỏ qua
 CASE       = 0               # user: fold 0..4 / position: 0..3
-VARIANTS   = ['full']   # danh sách đầy đủ: xem "CÁC TUỲ CHỌN" ở đầu file
+VARIANTS   = ['full', 'gate', 'wo_shape']   # mỗi account 1 CASE (0..4); danh sách: "CÁC TUỲ CHỌN"
 EXTRA      = ''              # xem "CÁC TUỲ CHỌN"; mặc định 100 epoch; vd '--epochs=2' để chạy thử
 RUN_TAG    = 'ablation_v5'
 PREV_RESULTS = ''            # vd '/kaggle/input/<output-phien-truoc>/results/ablation_v4'

@@ -358,6 +358,9 @@ def parse_args():
     parser.add_argument("--spec_win", type=str, default="hann", choices=["hann", "rect"],
                         help="WiFormer v5 speed branch: window before the FFT (hann = per-window mean "
                              "removed + Hann scaled to mean 1, default; rect = no window, ablation)")
+    parser.add_argument("--fusion", type=str, default="linear", choices=["linear", "gate"],
+                        help="WiFormer v5: fusion of the shape / speed branches per moment "
+                             "(linear = Linear(2D, D) on the concatenation; gate = scalar gate per moment)")
     parser.add_argument("--norm", type=str, default="sub", choices=["sub", "none"],
                         help="WiFormer v4 per-sample normalisation: sub = minus mean per (rx, sub), / std per rx "
                              "(default); none = keep the loader's input (UT_HAR: per-sample min-max), "
@@ -603,6 +606,7 @@ def main():
             norm=args.norm,
             mod_drop=0.5 if args.mod_drop is None else args.mod_drop,
             spec_win=args.spec_win,
+            fusion=args.fusion,
             window_sec=args.window_sec,
             fs=args.fs,
             window=args.window,

@@ -158,8 +158,8 @@ V4_SETS = {"core": V4_CORE, "all": list(V4_VARIANTS)}
 V5_VARIANTS = {
     "full": ("Full", "WiFormer v5 (shape: Conv -> Block 2; speed: averaged Hann spectrum; mod_drop 0.5)",
              ["--v5_ablation=full"]),
-    "rect": ("Rect window", "Speed branch without the Hann window (= v4 hybrid_drop)",
-             ["--v5_ablation=full", "--spec_win=rect"]),
+    "gate": ("Gate fusion", "Scalar gate per moment instead of the linear fusion (mod_drop kept)",
+             ["--v5_ablation=full", "--fusion=gate"]),
     "wo_shape": ("w/o shape", "Speed branch only (averaged Hann spectrum -> Linear -> Block 3)",
                  ["--v5_ablation=wo_shape"]),
 }

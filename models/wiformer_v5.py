@@ -30,12 +30,17 @@ shape      : Block 1  token = Linear(D, D)(Conv1d x3 -> pool flat4 -> Linear)   
              Block 2  Rx x Sub attention per window, relative bias, CLS -> h_k  (B, K, D)
 speed      : per-window mean removed -> Hann (scaled to mean 1) -> log1p|rfft| without DC (W//2 bins),
              mean over (rx, sub) -> Linear -> a_k                     (B, K, D)
-fusion     : z_k = Linear(2D, D)([h_k || a_k]); training: h = 0 for a sample w.p. mod_drop
+fusion     : linear (default): z_k = Linear(2D, D)([h_k || a_k])
+             gate           : h'_k = LN(h_k), a'_k = LN(a_k) (no affine),
+                              g_k = sigmoid(w . [h'_k || a'_k] + b)  (one scalar per moment),
+                              z_k = g_k h'_k + (1 - g_k) a'_k
+             training: h = 0 for a sample w.p. mod_drop (both fusions)
 Block 3    : temporal Transformer, signed relative bias b[i - j], CLS
 classifier : LayerNorm -> Dropout -> Linear                           (B, C);  loss = CE
 
 Ablations: wo_shape = speed branch only, z_k = Linear(D, D)(a_k) -> Block 3
-           spec_win="rect" (ablation rect) = no window before the FFT (= v4 hybrid_drop).
+           fusion="gate" = scalar gate per moment instead of the linear fusion
+           (spec_win="rect" = no window before the FFT, = v4 hybrid_drop; kept as an option only).
 """
 
 import json
@@ -51,6 +56,7 @@ from .wiformer_v4 import DATASET_FS, ConvExtractor, RxSubAttention, TemporalTran
 
 ABLATIONS = ("full", "wo_shape")
 SPEC_WINDOWS = ("rect", "hann")
+FUSIONS = ("linear", "gate")
 
 
 class SpeedBranch(nn.Module):
@@ -93,7 +99,7 @@ class MomentFusion(nn.Module):
         self.mod_drop = mod_drop
         self.knock = None
 
-    def forward(self, h, a):
+    def drop(self, h, a):
         if self.training and self.mod_drop > 0:
             keep = torch.rand(h.shape[0], 1, 1, device=h.device) >= self.mod_drop
             h = h * keep.to(h.dtype)
@@ -101,7 +107,38 @@ class MomentFusion(nn.Module):
             h = torch.zeros_like(h)
         elif self.knock == "speed":
             a = torch.zeros_like(a)
+        return h, a
+
+    def forward(self, h, a):
+        h, a = self.drop(h, a)
         return self.fuse(torch.cat([h, a], dim=-1))
+
+
+class GateFusion(MomentFusion):
+    """
+    Scalar gate per moment:  h' = LN(h), a' = LN(a)  (no affine, so both branches have the
+    same scale and g reads as the share of the shape branch),
+    g_k = sigmoid(w . [h'_k || a'_k] + b),  z_k = g_k h'_k + (1 - g_k) a'_k.
+    Same mod_drop / knock as MomentFusion (applied after LN, so a dropped h is exactly 0).
+    record=True keeps the last g (B, K) for analysis.
+    """
+
+    def __init__(self, d_model, mod_drop=0.5):
+        nn.Module.__init__(self)
+        self.norm_h = nn.LayerNorm(d_model, elementwise_affine=False)
+        self.norm_a = nn.LayerNorm(d_model, elementwise_affine=False)
+        self.gate = nn.Linear(2 * d_model, 1)
+        self.mod_drop = mod_drop
+        self.knock = None
+        self.record = False
+        self.last_g = None
+
+    def forward(self, h, a):
+        h, a = self.drop(self.norm_h(h), self.norm_a(a))
+        g = torch.sigmoid(self.gate(torch.cat([h, a], dim=-1)))            # (B, K, 1)
+        if self.record:
+            self.last_g = g.squeeze(-1)
+        return g * h + (1 - g) * a
 
 
 class WiFormerV5(BaseModel):
@@ -134,6 +171,7 @@ class WiFormerV5(BaseModel):
         norm="sub",
         mod_drop=0.5,
         spec_win="hann",
+        fusion="linear",
         **kwargs,
     ):
         super().__init__(input_shape=input_shape, num_classes=num_classes)
@@ -143,7 +181,11 @@ class WiFormerV5(BaseModel):
             raise ValueError(f"WiFormerV5: norm must be 'sub' or 'none', got '{norm}'")
         if spec_win not in SPEC_WINDOWS:
             raise ValueError(f"WiFormerV5: spec_win must be one of {SPEC_WINDOWS}, got '{spec_win}'")
-        self.ablation, self.norm = ablation, norm
+        if fusion not in FUSIONS:
+            raise ValueError(f"WiFormerV5: fusion must be one of {FUSIONS}, got '{fusion}'")
+        if ablation == "wo_shape" and fusion != "linear":
+            raise ValueError("WiFormerV5: wo_shape has a single branch, fusion must be 'linear'")
+        self.ablation, self.norm, self.fusion_type = ablation, norm, fusion
         if ablation == "wo_shape":
             mod_drop = 0.0                                                # no shape branch to drop
 
@@ -171,7 +213,7 @@ class WiFormerV5(BaseModel):
         self.n_win = (T - window) // stride + 1
         dur = f"{window / self.fs:.3f} s" if self.fs else "fs unknown"
         print(f"[WiFormerV5] window W={window} ({dur}), stride={stride}, n_win={self.n_win}, "
-              f"norm={norm}, mod_drop={mod_drop}, spec_win={spec_win}, ablation={ablation}")
+              f"norm={norm}, mod_drop={mod_drop}, spec_win={spec_win}, fusion={fusion}, ablation={ablation}")
 
         k2_ff = k2_ff or 4 * d_model
         k3_ff = k3_ff or 4 * d_model
@@ -186,7 +228,10 @@ class WiFormerV5(BaseModel):
         # speed: spectrum averaged over all channels
         self.speed = SpeedBranch(window, d_model, spec_win)
         # wo_shape (speed only): z_k = Linear(D, D)(a_k)  (same function class as v4 freq_mean)
-        self.fusion = nn.Linear(d_model, d_model) if ablation == "wo_shape" else MomentFusion(d_model, mod_drop)
+        if ablation == "wo_shape":
+            self.fusion = nn.Linear(d_model, d_model)
+        else:
+            self.fusion = (GateFusion if fusion == "gate" else MomentFusion)(d_model, mod_drop)
         # order: temporal Transformer over the moments
         self.block3 = TemporalTransformer(self.n_win, d_model, k3_heads, k3_layers, k3_ff, dropout,
                                           activation, norm_first)
@@ -233,8 +278,10 @@ class WiFormerV5(BaseModel):
     def analyze(self, loader, device, save_dir):
         """
         After training (best checkpoint), on the test loader:
-        - view_contribution.json : fuse weight norm per branch and test accuracy (overall +
+        - view_contribution.json : fuse weight norm per branch (linear) and test accuracy (overall +
           per class) when one branch is zeroed (knock-out: shape / speed)
+        - gate.json (fusion=gate) : g_k (share of the shape branch) on the test set, both branches
+          kept: mean over all, mean per class, mean per class and moment k
         - block2_bias.json / block3_bias.json : learned bias tables
         - rx_permutation.json : prediction agreement when the RX are cyclically permuted
         """
@@ -250,6 +297,8 @@ class WiFormerV5(BaseModel):
         if self.ablation == "wo_shape":
             return                                                        # one branch: no knock-out
         fu = self.fusion
+        gated = isinstance(fu, GateFusion)
+        g_sum, g_cnt = {}, {}                                             # class -> sum of g (K,), count
         modes = [None, "shape", "speed"]
         hit = {m: {} for m in modes}
         n, agree, max_diff = 0, 0, 0.0
@@ -257,8 +306,17 @@ class WiFormerV5(BaseModel):
             x, y = x.to(device), y.to(device)
             for mode in modes:
                 fu.knock = mode
+                if gated:
+                    fu.record = mode is None
                 logits = self(x)
                 pred = logits.argmax(1)
+                if gated and mode is None:
+                    g = fu.last_g.float()
+                    for c in y.unique().tolist():
+                        m = y == c
+                        g_sum[c] = g_sum.get(c, 0) + g[m].sum(0).cpu()
+                        g_cnt[c] = g_cnt.get(c, 0) + int(m.sum().item())
+                    fu.record = False
                 for c in y.unique().tolist():
                     m = y == c
                     s = hit[mode].setdefault(c, [0, 0])
@@ -275,15 +333,24 @@ class WiFormerV5(BaseModel):
         def acc(t):
             return sum(v[1] for v in t.values()) / max(sum(v[0] for v in t.values()), 1)
 
-        D = fu.fuse.weight.shape[0]
-        w = fu.fuse.weight
         names = {None: "both", "shape": "speed_only(shape zeroed)", "speed": "shape_only(speed zeroed)"}
-        out = {
-            "fuse_weight_norm": {"shape": w[:, :D].norm().item(), "speed": w[:, D:].norm().item()},
-            "test_acc": {names[m]: acc(hit[m]) for m in modes},
-            "recall_by_class": {names[m]: {str(c): hit[m][c][1] / hit[m][c][0] for c in sorted(hit[m])}
-                                for m in modes},
-        }
+        out = {}
+        if not gated:
+            D = fu.fuse.weight.shape[0]
+            w = fu.fuse.weight
+            out["fuse_weight_norm"] = {"shape": w[:, :D].norm().item(), "speed": w[:, D:].norm().item()}
+        out["test_acc"] = {names[m]: acc(hit[m]) for m in modes}
+        out["recall_by_class"] = {names[m]: {str(c): hit[m][c][1] / hit[m][c][0] for c in sorted(hit[m])}
+                                  for m in modes}
+        g_mean = None
+        if gated:
+            cs = sorted(g_sum)
+            g_mean = float(sum(g_sum[c].sum() for c in cs) / sum(g_cnt[c] * self.n_win for c in cs))
+            with open(os.path.join(save_dir, "gate.json"), "w", encoding="utf-8") as fh:
+                json.dump({"note": "g = share of the shape branch (1 - g: speed), test set, both branches",
+                           "mean": g_mean,
+                           "mean_by_class": {str(c): float(g_sum[c].mean() / g_cnt[c]) for c in cs},
+                           "by_class_moment": {str(c): (g_sum[c] / g_cnt[c]).tolist() for c in cs}}, fh, indent=2)
         with open(os.path.join(save_dir, "view_contribution.json"), "w", encoding="utf-8") as fh:
             json.dump(out, fh, indent=2)
         with open(os.path.join(save_dir, "rx_permutation.json"), "w", encoding="utf-8") as fh:
@@ -294,6 +361,8 @@ class WiFormerV5(BaseModel):
             json.dump({"sub_bias[h][|ds|]": b2.sub_bias.tolist(),
                        "cross_bias[h]": b2.cross_bias.tolist(),
                        "cls_bias[h][cls->tok, tok->cls, cls->cls]": b2.cls_bias.tolist()}, fh, indent=2)
+        if g_mean is not None:
+            print("[WiFormerV5] gate: mean share of the shape branch g = {:.3f}".format(g_mean))
         print("[WiFormerV5] test acc both {:.4f} | speed only {:.4f} | shape only {:.4f} | "
               "RX permutation agreement {:.4f}".format(acc(hit[None]), acc(hit["shape"]), acc(hit["speed"]),
                                                        agree / max(n, 1)))
