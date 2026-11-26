@@ -70,13 +70,12 @@
 #   repeat              theo lần lặp (mặc định)
 #                       sshar: dir00 rep 1-6/7-8/9-10, dir01/02 rep 1-3/4/5 -> 3840/1280/1280
 #                       xrf55: rep 1-12/13-16/17-20
-#   user                cross-user 5-fold, CASE 0..4. sshar: 6/2/2 người -> 3840/1280/1280
-#                       mỗi người được test đúng 1 lần và làm val đúng 1 lần
-#                       fold 0: train 1,3,4,9,11,12  | val 2,10  | test 13,14
-#                       fold 1: train 1,4,9,12,13,14 | val 3,11  | test 2,10
-#                       fold 2: train 2,4,10,12,13,14| val 1,9   | test 3,11
-#                       fold 3: train 2,3,10,11,13,14| val 4,12  | test 1,9
-#                       fold 4: train 1,2,3,9,10,11  | val 13,14 | test 4,12
+#   user                cross-user, CASE 0..4. sshar: 6/2/2 người -> 3840/1280/1280
+#                       case 0: train 1,2,4,9,10,11 | val 3,12 | test 13,14
+#                       case 1: train 1,3,9,11,12,14 | val 4,13 | test 2,10
+#                       case 2: train 2,4,9,10,12,13 | val 1,14 | test 3,11
+#                       case 3: train 3,4,10,12,13,14 | val 2,11 | test 1,9
+#                       case 4: train 1,2,4,11,13,14 | val 9,10 | test 3,12
 #   position            cross-position (sshar), CASE 0..3: test = 2/8 vị trí, còn lại train:val = 3:1
 #   (ut_har bỏ qua SPLIT_MODE, luôn dùng split có sẵn; thư mục ghi 'official')
 #
@@ -107,9 +106,9 @@ REPO_URL   = 'https://github.com/phanvanhai/wiformer.git'
 BRANCH     = 'arch_v4'
 MODEL      = 'wiformer_v4'   # wiformer_v4 | wiformer (v2)
 DATASET    = 'sshar_esp'     # sshar_esp | ut_har
-SPLIT_MODE = 'user'          # repeat | user | position (đều 6:2:2) ; ut_har: bỏ qua
-CASE       = 0               # user: fold 0..4 / position: 0..3
-VARIANTS   = ['freq_mean', 'freq_mean_e200', 'full']   # danh sách đầy đủ: xem "CÁC TUỲ CHỌN" ở đầu file
+SPLIT_MODE = 'repeat'        # repeat | user | position (đều 6:2:2) ; ut_har: bỏ qua
+CASE       = 0               # chỉ dùng cho user (0..4) / position (0..3)
+VARIANTS   = ['hybrid_drop', 'freq_mean_e200']   # danh sách đầy đủ: xem "CÁC TUỲ CHỌN" ở đầu file
 EXTRA      = ''              # xem "CÁC TUỲ CHỌN"; mặc định 100 epoch; vd '--epochs=2' để chạy thử
 RUN_TAG    = 'ablation_v4'
 PREV_RESULTS = ''            # vd '/kaggle/input/<output-phien-truoc>/results/ablation_v4'
