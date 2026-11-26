@@ -104,7 +104,7 @@ DATA_PATHS = {
 }
 
 REPO_URL   = 'https://github.com/phanvanhai/wiformer.git'
-BRANCH     = 'arch_v4'
+BRANCH     = 'cross-user'
 MODEL      = 'wiformer_v4'   # wiformer_v4 | wiformer (v2)
 DATASET    = 'sshar_esp'     # sshar_esp | ut_har
 SPLIT_MODE = 'user'          # repeat | user | position (đều 6:2:2) ; ut_har: bỏ qua
