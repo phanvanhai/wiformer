@@ -112,9 +112,14 @@ def train_one_epoch(
     optimizer,
     device,
     accum_steps=1,
+    timing=None,
 ):
     """
     Train one epoch.
+
+    timing: optional dict, filled with the seconds spent waiting for data ("data") and in
+    forward / backward / step ("compute"); the GPU is synchronised for this, so use it on
+    one epoch only.
 
     accum_steps > 1: gradient accumulation -- the optimizer steps every
     `accum_steps` mini-batches (effective batch = batch_size * accum_steps),
@@ -136,7 +141,13 @@ def train_one_epoch(
     n_batches = len(loader)
     optimizer.zero_grad()
 
+    sync = (lambda: torch.cuda.synchronize()) if torch.cuda.is_available() else (lambda: None)
+    t_data = t_comp = 0.0
+    t0 = time.time()
     for i, (x, y) in enumerate(loader, start=1):
+        if timing is not None:
+            t1 = time.time()
+            t_data += t1 - t0
         x = x.to(device)
         y = y.to(device)
 
@@ -146,6 +157,10 @@ def train_one_epoch(
         if i % accum_steps == 0 or i == n_batches:
             optimizer.step()
             optimizer.zero_grad()
+        if timing is not None:
+            sync()
+            t0 = time.time()
+            t_comp += t0 - t1
 
         running_loss += loss.item()
         pred = output.argmax(dim=1)
@@ -154,6 +169,8 @@ def train_one_epoch(
 
     train_loss = running_loss / len(loader)
     train_acc = correct / total
+    if timing is not None:
+        timing.update(data=t_data, compute=t_comp)
 
     return train_loss, train_acc
 
@@ -280,6 +297,8 @@ def train(
     start_time = time.time()
     # --------------------------------------------------------
     for epoch in range(1, epochs + 1):
+        timing = {} if epoch == 1 else None
+        t_ep = time.time()
         train_loss, train_acc = train_one_epoch(
             model=model,
             loader=train_loader,
@@ -287,7 +306,9 @@ def train(
             optimizer=optimizer,
             device=device,
             accum_steps=accum_steps,
+            timing=timing,
         )
+        t_val = time.time()
 
         val_loss, val_acc, _, _ = evaluate(
             model=model,
@@ -295,6 +316,9 @@ def train(
             criterion=criterion,
             device=device,
         )
+        if timing is not None:
+            print(f"Epoch 1 time: train {t_val - t_ep:.1f} s (waiting for data {timing['data']:.1f} s, "
+                  f"compute {timing['compute']:.1f} s) | val {time.time() - t_val:.1f} s")
 
         history.append({
             "epoch": epoch,

@@ -16,6 +16,8 @@ import os
 import glob
 import re
 
+import time
+
 import numpy as np
 
 import torch
@@ -590,29 +592,34 @@ class _SSHARDatasetBase(Dataset):
             splits = [s["fixed"] for s in self.samples]
         self.samples = [s for s, sp in zip(self.samples, splits) if sp == self.split]
 
+        # ESP: keep the whole split in RAM (one read of every file instead of one per epoch;
+        # ~0.67 MB / sample, ~4.3 GB for the 6400 samples of room_02). ASUS (4 antennas) is
+        # ~4x larger and stays on disk.
+        self.cache = None
+        if self.device == "esp" and self.samples:
+            t0 = time.time()
+            first = self._read(self.samples[0])
+            self.cache = np.empty((len(self.samples),) + first.shape, dtype=np.float32)
+            self.cache[0] = first
+            for i, s in enumerate(self.samples[1:], start=1):
+                self.cache[i] = self._read(s)
+            print(f"[SSHAR] {self.split}: {len(self.samples)} samples cached in RAM "
+                  f"({self.cache.nbytes / 2 ** 30:.2f} GB, {time.time() - t0:.0f} s)")
+
     # --------------------------------------------------------
     def __len__(self):
         return len(self.samples)
 
     # --------------------------------------------------------
+    @staticmethod
+    def _read(sample):
+        # Stack RX -> ESP: (3, 1, 56, T) ; ASUS: (3, 4, 56, T)
+        return np.stack([np.load(file).astype(np.float32) for file in sample["files"]])
+
+    # --------------------------------------------------------
     def __getitem__(self, idx):
         sample = self.samples[idx]
-        rx_data = []
-
-        for file in sample["files"]:
-            x = np.load(file).astype(np.float32)
-            rx_data.append(x)
-
-        # --------------------------------------------------
-        # Stack RX
-        #
-        # ESP:
-        #   (3, 1, 56, T)
-        #
-        # ASUS:
-        #   (3, 4, 56, T)
-        # --------------------------------------------------
-        x = np.stack(rx_data)
+        x = self.cache[idx] if self.cache is not None else self._read(sample)
 
         # ============================================================
         # Intel shape
