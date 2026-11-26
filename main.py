@@ -353,8 +353,11 @@ def parse_args():
                         help="Training-only probability of zeroing the Block 2 branch h_k (per sample), "
                              "so the averaged-spectrum branch is also used. "
                              "Default: 0 for wiformer_v4 (ablation hybrid only), 0.5 for wiformer_v5")
-    parser.add_argument("--v5_ablation", type=str, default="full", choices=["full"],
-                        help="WiFormer v5 ablation")
+    parser.add_argument("--v5_ablation", type=str, default="full", choices=["full", "wo_shape"],
+                        help="WiFormer v5 ablation (wo_shape = speed branch only)")
+    parser.add_argument("--spec_win", type=str, default="rect", choices=["rect", "hann"],
+                        help="WiFormer v5 speed branch: window before the FFT (hann = per-window mean "
+                             "removed + Hann scaled to mean 1)")
     parser.add_argument("--norm", type=str, default="sub", choices=["sub", "none"],
                         help="WiFormer v4 per-sample normalisation: sub = minus mean per (rx, sub), / std per rx "
                              "(default); none = keep the loader's input (UT_HAR: per-sample min-max), "
@@ -599,6 +602,7 @@ def main():
             ablation=args.v5_ablation,
             norm=args.norm,
             mod_drop=0.5 if args.mod_drop is None else args.mod_drop,
+            spec_win=args.spec_win,
             window_sec=args.window_sec,
             fs=args.fs,
             window=args.window,

@@ -21,6 +21,9 @@
 #   full       v5: mỗi khoảnh khắc (window) 2 nhánh: hình dạng (Conv -> Khối 2) + tốc độ (phổ trung bình
 #              qua rx, sub), gộp Linear(2D -> D), modality dropout 0.5 -> Khối 3 (~3.3 h ESP)
 #              (= wiformer_v4 hybrid_drop)
+#   wo_shape   chỉ nhánh tốc độ -> Khối 3 (= wiformer_v4 freq_mean, ~1 h ESP)
+#   wo_shape_hann  wo_shape, cửa sổ Hann trước FFT (bỏ mean từng window)
+#   hann       full v5, nhánh tốc độ dùng cửa sổ Hann
 #
 # VARIANTS (wiformer_v4, xem: python ablation.py --model=wiformer_v4 --list)
 #   Kiến trúc: WiFormer_v4_Architecture.md, WiFormer_Paper.md
@@ -114,7 +117,7 @@ MODEL      = 'wiformer_v5'   # wiformer_v5 | wiformer_v4 | wiformer (v2)
 DATASET    = 'sshar_esp'     # sshar_esp | ut_har
 SPLIT_MODE = 'user'          # repeat | user | position (đều 6:2:2) ; ut_har: bỏ qua
 CASE       = 0               # user: fold 0..4 / position: 0..3
-VARIANTS   = ['full']   # danh sách đầy đủ: xem "CÁC TUỲ CHỌN" ở đầu file
+VARIANTS   = ['wo_shape_hann']   # mốc rect = v4 freq_mean fold 0 (đã chạy); danh sách: "CÁC TUỲ CHỌN"
 EXTRA      = ''              # xem "CÁC TUỲ CHỌN"; mặc định 100 epoch; vd '--epochs=2' để chạy thử
 RUN_TAG    = 'ablation_v5'
 PREV_RESULTS = ''            # vd '/kaggle/input/<output-phien-truoc>/results/ablation_v4'

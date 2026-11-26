@@ -28,9 +28,13 @@ windows    : W = 2^round(log2(window_sec * fs)), stride W // 2       (B, R, S, K
 shape      : Block 1  token = Linear(D, D)(Conv1d x3 -> pool flat4 -> Linear)   per (rx, sub, window)
              Block 2  Rx x Sub attention per window, relative bias, CLS -> h_k  (B, K, D)
 speed      : log1p|rfft| without DC (W//2 bins), mean over (rx, sub) -> Linear -> a_k (B, K, D)
+             spec_win="hann": per-window mean removed, Hann (mean 1) before the FFT
 fusion     : z_k = Linear(2D, D)([h_k || a_k]); training: h = 0 for a sample w.p. mod_drop
 Block 3    : temporal Transformer, signed relative bias b[i - j], CLS
 classifier : LayerNorm -> Dropout -> Linear                           (B, C);  loss = CE
+
+Ablations: wo_shape = speed branch only, z_k = Linear(D, D)(a_k) -> Block 3
+           (same function class as v4 freq_mean).
 """
 
 import json
@@ -44,20 +48,33 @@ from .base import BaseModel
 from .wiformer import WIFORMER_DATASET_CFG
 from .wiformer_v4 import DATASET_FS, ConvExtractor, RxSubAttention, TemporalTransformer
 
-ABLATIONS = ("full",)
+ABLATIONS = ("full", "wo_shape")
+SPEC_WINDOWS = ("rect", "hann")
 
 
 class SpeedBranch(nn.Module):
-    """log1p|rfft(W)| without DC (W//2 bins), mean over the R*S channels -> Linear(W//2, D)."""
+    """
+    log1p|rfft(W)| without DC (W//2 bins), mean over the R*S channels -> Linear(W//2, D).
+    spec_win="hann": per-window mean removed, then periodic Hann window scaled to mean 1
+    (same gain as rect) before the FFT -> sidelobes -31 dB instead of -13 dB; Hann with the
+    50 % overlap sums to a constant (COLA), so no part of the signal is down-weighted overall.
+    """
 
-    def __init__(self, window, d_model):
+    def __init__(self, window, d_model, spec_win="rect"):
         super().__init__()
         self.n_bins = window // 2
+        self.spec_win = spec_win
+        if spec_win == "hann":
+            w = torch.hann_window(window, periodic=True)
+            self.register_buffer("win", w / w.mean(), persistent=False)
         self.proj = nn.Linear(self.n_bins, d_model)
 
     def forward(self, seg):
         # seg: (B, R, S, K, W) -> (B, K, D)
-        spec = torch.log1p(torch.fft.rfft(seg.float(), dim=-1).abs())[..., 1:1 + self.n_bins]
+        s = seg.float()
+        if self.spec_win == "hann":
+            s = (s - s.mean(dim=-1, keepdim=True)) * self.win
+        spec = torch.log1p(torch.fft.rfft(s, dim=-1).abs())[..., 1:1 + self.n_bins]
         return self.proj(spec.mean(dim=(1, 2)).to(seg.dtype))
 
 
@@ -114,6 +131,7 @@ class WiFormerV5(BaseModel):
         ablation="full",
         norm="sub",
         mod_drop=0.5,
+        spec_win="rect",
         **kwargs,
     ):
         super().__init__(input_shape=input_shape, num_classes=num_classes)
@@ -121,7 +139,11 @@ class WiFormerV5(BaseModel):
             raise ValueError(f"WiFormerV5: ablation must be one of {ABLATIONS}, got '{ablation}'")
         if norm not in ("sub", "none"):
             raise ValueError(f"WiFormerV5: norm must be 'sub' or 'none', got '{norm}'")
+        if spec_win not in SPEC_WINDOWS:
+            raise ValueError(f"WiFormerV5: spec_win must be one of {SPEC_WINDOWS}, got '{spec_win}'")
         self.ablation, self.norm = ablation, norm
+        if ablation == "wo_shape":
+            mod_drop = 0.0                                                # no shape branch to drop
 
         name = (dataset or "").lower()
         cfg = dict(WIFORMER_DATASET_CFG.get(name, {}))
@@ -147,20 +169,22 @@ class WiFormerV5(BaseModel):
         self.n_win = (T - window) // stride + 1
         dur = f"{window / self.fs:.3f} s" if self.fs else "fs unknown"
         print(f"[WiFormerV5] window W={window} ({dur}), stride={stride}, n_win={self.n_win}, "
-              f"norm={norm}, mod_drop={mod_drop}, ablation={ablation}")
+              f"norm={norm}, mod_drop={mod_drop}, spec_win={spec_win}, ablation={ablation}")
 
         k2_ff = k2_ff or 4 * d_model
         k3_ff = k3_ff or 4 * d_model
         R, S = self.n_rx, self.n_sub
 
-        # shape: per-channel waveform tokens -> selective aggregation over channels
-        self.conv = ConvExtractor(d_model, feat, window, k1_conv, k1_pool)
-        self.token = nn.Linear(d_model, d_model)
-        self.block2 = RxSubAttention(R, S, d_model, k2_heads, k2_layers, k2_ff, dropout,
-                                     activation, norm_first)
+        if ablation != "wo_shape":
+            # shape: per-channel waveform tokens -> selective aggregation over channels
+            self.conv = ConvExtractor(d_model, feat, window, k1_conv, k1_pool)
+            self.token = nn.Linear(d_model, d_model)
+            self.block2 = RxSubAttention(R, S, d_model, k2_heads, k2_layers, k2_ff, dropout,
+                                         activation, norm_first)
         # speed: spectrum averaged over all channels
-        self.speed = SpeedBranch(window, d_model)
-        self.fusion = MomentFusion(d_model, mod_drop)
+        self.speed = SpeedBranch(window, d_model, spec_win)
+        # wo_shape (speed only): z_k = Linear(D, D)(a_k)  (same function class as v4 freq_mean)
+        self.fusion = nn.Linear(d_model, d_model) if ablation == "wo_shape" else MomentFusion(d_model, mod_drop)
         # order: temporal Transformer over the moments
         self.block3 = TemporalTransformer(self.n_win, d_model, k3_heads, k3_layers, k3_ff, dropout,
                                           activation, norm_first)
@@ -178,8 +202,9 @@ class WiFormerV5(BaseModel):
                 nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
-        for blk in (self.block2, self.block3):
-            nn.init.trunc_normal_(blk.cls_token, std=0.02)
+        for blk in (getattr(self, "block2", None), self.block3):
+            if blk is not None:
+                nn.init.trunc_normal_(blk.cls_token, std=0.02)
 
     def preprocess(self, x):
         B, T = x.shape[0], x.shape[-1]
@@ -195,6 +220,8 @@ class WiFormerV5(BaseModel):
         B, R, S, _ = x.shape
         seg = x.unfold(-1, self.window, self.stride)                      # (B, R, S, K, W)
         K = seg.shape[3]
+        if self.ablation == "wo_shape":
+            return self.classifier(self.block3(self.fusion(self.speed(seg))))
         v = self.token(self.conv(seg.permute(0, 1, 3, 2, 4).reshape(-1, self.window)))
         h = self.block2(v.reshape(B, R, K, S, -1))                        # shape  (B, K, D)
         a = self.speed(seg)                                               # speed  (B, K, D)
@@ -213,6 +240,13 @@ class WiFormerV5(BaseModel):
         os.makedirs(save_dir, exist_ok=True)
         R = self.n_rx
         perm = list(range(1, R)) + [0]
+        b3 = self.block3
+        with open(os.path.join(save_dir, "block3_bias.json"), "w", encoding="utf-8") as fh:
+            json.dump({"offsets(i-j)": list(range(-(self.n_win - 1), self.n_win)),
+                       "rel_bias[h][offset]": b3.rel_bias.tolist(),
+                       "cls_bias[h][cls->win, win->cls, cls->cls]": b3.cls_bias.tolist()}, fh, indent=2)
+        if self.ablation == "wo_shape":
+            return                                                        # one branch: no knock-out
         fu = self.fusion
         modes = [None, "shape", "speed"]
         hit = {m: {} for m in modes}
@@ -253,15 +287,11 @@ class WiFormerV5(BaseModel):
         with open(os.path.join(save_dir, "rx_permutation.json"), "w", encoding="utf-8") as fh:
             json.dump({"perm": perm, "n": n, "agreement": agree / max(n, 1), "max_abs_logit_diff": max_diff},
                       fh, indent=4)
-        b2, b3 = self.block2, self.block3
+        b2 = self.block2
         with open(os.path.join(save_dir, "block2_bias.json"), "w", encoding="utf-8") as fh:
             json.dump({"sub_bias[h][|ds|]": b2.sub_bias.tolist(),
                        "cross_bias[h]": b2.cross_bias.tolist(),
                        "cls_bias[h][cls->tok, tok->cls, cls->cls]": b2.cls_bias.tolist()}, fh, indent=2)
-        with open(os.path.join(save_dir, "block3_bias.json"), "w", encoding="utf-8") as fh:
-            json.dump({"offsets(i-j)": list(range(-(self.n_win - 1), self.n_win)),
-                       "rel_bias[h][offset]": b3.rel_bias.tolist(),
-                       "cls_bias[h][cls->win, win->cls, cls->cls]": b3.cls_bias.tolist()}, fh, indent=2)
         print("[WiFormerV5] test acc both {:.4f} | speed only {:.4f} | shape only {:.4f} | "
               "RX permutation agreement {:.4f}".format(acc(hit[None]), acc(hit["shape"]), acc(hit["speed"]),
                                                        agree / max(n, 1)))
