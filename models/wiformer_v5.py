@@ -7,13 +7,14 @@ The CSI is cut into short overlapping moments (windows, ~0.3 s). Inside one mome
   - shape of the motion : seen differently by every channel (rx, subcarrier)
                           -> look at every channel, then aggregate selectively (attention)
   - speed of the motion : the same for every channel (Doppler of the body)
-                          -> average the spectrum over all channels
+                          -> average the spectrum over all channels (Hann window, STFT style)
 Across moments: read the moments in order (signed relative bias).
 The shape branch is far larger than the speed branch, so during training it is dropped
 for a whole sample with probability `mod_drop` (modality dropout): the temporal block must
 also learn to read the speed branch.
 
-Architecture = WiFormer v4 ablation `hybrid` + `--mod_drop=0.5` (same layers and parameters).
+Architecture = WiFormer v4 ablation `hybrid` + `--mod_drop=0.5` (same layers and parameters)
+               + Hann window before the FFT of the speed branch.
 
 Input (from datasets.py)
 ------------------------
@@ -27,14 +28,14 @@ preprocess : norm="sub"  -> x - mean_t per (rx, sub), / std per (sample, rx)
 windows    : W = 2^round(log2(window_sec * fs)), stride W // 2       (B, R, S, K, W)
 shape      : Block 1  token = Linear(D, D)(Conv1d x3 -> pool flat4 -> Linear)   per (rx, sub, window)
              Block 2  Rx x Sub attention per window, relative bias, CLS -> h_k  (B, K, D)
-speed      : log1p|rfft| without DC (W//2 bins), mean over (rx, sub) -> Linear -> a_k (B, K, D)
-             spec_win="hann": per-window mean removed, Hann (mean 1) before the FFT
+speed      : per-window mean removed -> Hann (scaled to mean 1) -> log1p|rfft| without DC (W//2 bins),
+             mean over (rx, sub) -> Linear -> a_k                     (B, K, D)
 fusion     : z_k = Linear(2D, D)([h_k || a_k]); training: h = 0 for a sample w.p. mod_drop
 Block 3    : temporal Transformer, signed relative bias b[i - j], CLS
 classifier : LayerNorm -> Dropout -> Linear                           (B, C);  loss = CE
 
 Ablations: wo_shape = speed branch only, z_k = Linear(D, D)(a_k) -> Block 3
-           (same function class as v4 freq_mean).
+           spec_win="rect" (ablation rect) = no window before the FFT (= v4 hybrid_drop).
 """
 
 import json
@@ -55,12 +56,13 @@ SPEC_WINDOWS = ("rect", "hann")
 class SpeedBranch(nn.Module):
     """
     log1p|rfft(W)| without DC (W//2 bins), mean over the R*S channels -> Linear(W//2, D).
-    spec_win="hann": per-window mean removed, then periodic Hann window scaled to mean 1
+    spec_win="rect": no window (ablation).
+    spec_win="hann" (default): per-window mean removed, then periodic Hann window scaled to mean 1
     (same gain as rect) before the FFT -> sidelobes -31 dB instead of -13 dB; Hann with the
     50 % overlap sums to a constant (COLA), so no part of the signal is down-weighted overall.
     """
 
-    def __init__(self, window, d_model, spec_win="rect"):
+    def __init__(self, window, d_model, spec_win="hann"):
         super().__init__()
         self.n_bins = window // 2
         self.spec_win = spec_win
@@ -131,7 +133,7 @@ class WiFormerV5(BaseModel):
         ablation="full",
         norm="sub",
         mod_drop=0.5,
-        spec_win="rect",
+        spec_win="hann",
         **kwargs,
     ):
         super().__init__(input_shape=input_shape, num_classes=num_classes)

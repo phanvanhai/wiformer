@@ -156,14 +156,12 @@ V4_SETS = {"core": V4_CORE, "all": list(V4_VARIANTS)}
 
 # ---- WiFormer v5 (--model=wiformer_v5) ----
 V5_VARIANTS = {
-    "full": ("Full", "WiFormer v5 (shape: Conv -> Block 2; speed: averaged spectrum; mod_drop 0.5)",
+    "full": ("Full", "WiFormer v5 (shape: Conv -> Block 2; speed: averaged Hann spectrum; mod_drop 0.5)",
              ["--v5_ablation=full"]),
-    "wo_shape": ("w/o shape", "Speed branch only (averaged spectrum -> Linear -> Block 3; = v4 freq_mean)",
+    "rect": ("Rect window", "Speed branch without the Hann window (= v4 hybrid_drop)",
+             ["--v5_ablation=full", "--spec_win=rect"]),
+    "wo_shape": ("w/o shape", "Speed branch only (averaged Hann spectrum -> Linear -> Block 3)",
                  ["--v5_ablation=wo_shape"]),
-    "wo_shape_hann": ("w/o shape, Hann", "wo_shape with a Hann window before the FFT",
-                      ["--v5_ablation=wo_shape", "--spec_win=hann"]),
-    "hann": ("Full, Hann", "Full v5 with a Hann window before the FFT of the speed branch",
-             ["--v5_ablation=full", "--spec_win=hann"]),
 }
 V5_SETS = {"core": list(V5_VARIANTS), "all": list(V5_VARIANTS)}
 

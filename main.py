@@ -355,9 +355,9 @@ def parse_args():
                              "Default: 0 for wiformer_v4 (ablation hybrid only), 0.5 for wiformer_v5")
     parser.add_argument("--v5_ablation", type=str, default="full", choices=["full", "wo_shape"],
                         help="WiFormer v5 ablation (wo_shape = speed branch only)")
-    parser.add_argument("--spec_win", type=str, default="rect", choices=["rect", "hann"],
+    parser.add_argument("--spec_win", type=str, default="hann", choices=["hann", "rect"],
                         help="WiFormer v5 speed branch: window before the FFT (hann = per-window mean "
-                             "removed + Hann scaled to mean 1)")
+                             "removed + Hann scaled to mean 1, default; rect = no window, ablation)")
     parser.add_argument("--norm", type=str, default="sub", choices=["sub", "none"],
                         help="WiFormer v4 per-sample normalisation: sub = minus mean per (rx, sub), / std per rx "
                              "(default); none = keep the loader's input (UT_HAR: per-sample min-max), "
