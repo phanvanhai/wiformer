@@ -176,10 +176,9 @@ start
   CLS → token · token → CLS · CLS → CLS : 3 giá trị / head
 không có vị trí tuyệt đối, không có danh tính RX
 → bất biến khi hoán vị RX;
-repeat :Lớp Transformer (pre-norm) — ×2
+:<b>2 lớp Transformer (pre-norm)</b>, mỗi lớp:
   x = x + Dropout(Wo · softmax(QKᵀ/√d + bias) · V)
   x = x + Dropout(FFN(LayerNorm(x)))   FFN: D → 4D → D, GELU;
-repeat while (lớp tiếp theo?)
 :lấy CLS → h_k (B, 30, D);
 stop
 @enduml
@@ -204,10 +203,9 @@ start
   khoảnh khắc i với j : b[h, i − j], i − j ∈ {−29, …, 29}   (59 giá trị / head, có dấu)
   CLS → token · token → CLS · CLS → CLS : 3 giá trị / head
 b[h, +d] ≠ b[h, −d] → phân biệt "trước" và "sau";
-repeat :Lớp Transformer (pre-norm) — ×6
+:<b>6 lớp Transformer (pre-norm)</b>, mỗi lớp:
   x = x + Dropout(Wo · softmax(QKᵀ/√d + bias) · V)
   x = x + Dropout(FFN(LayerNorm(x)))   FFN: D → 4D → D, GELU;
-repeat while (lớp tiếp theo?)
 :lấy CLS → Classifier (B, C);
 stop
 @enduml
