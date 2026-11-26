@@ -362,6 +362,9 @@ def parse_args():
                         help="WiFormer v4 per-sample normalisation: sub = minus mean per (rx, sub), / std per rx "
                              "(default); none = keep the loader's input (UT_HAR: per-sample min-max), "
                              "i.e. keep the static level of each channel")
+    parser.add_argument("--labels", type=int, default=None, choices=[8, 7],
+                        help="SSHAR classes: 8 = all, 7 = lie_still + empty merged into one 'static' "
+                             "(no-action) class. Default: 7 for wiformer_v5, 8 for the other models")
     parser.add_argument("--class_weights", type=str, default=None,
                         help="Weighted CE: comma list of K floats (e.g. AMCS-TCN UT_HAR: 1,1,0.8,1,0.8,1.5,2) "
                              "or 'auto' (inverse train frequency, mean 1). Default: none")
@@ -509,6 +512,10 @@ def main():
     dataset_kwargs = {}
     dataset_kwargs["case_split"] = args.case_split
     dataset_kwargs["split_mode"] = args.split_mode
+    if args.labels is None:
+        args.labels = 7 if args.model == "wiformer_v5" and args.dataset.startswith("sshar") else 8
+    if args.dataset.startswith("sshar"):
+        dataset_kwargs["labels"] = args.labels
     if args.model in ("wiformer_v4", "wiformer_v5") and args.dataset.startswith("sshar") and args.norm == "sub":
         # WiFormer v4 normalises every sample itself (mean per (rx, sub), std per rx),
         # which cancels any global z-score -> skip the dataset's mean/std pass.

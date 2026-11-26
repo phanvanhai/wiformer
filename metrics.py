@@ -480,6 +480,7 @@ def plot_confusion_matrix(
 # Class names used in reports / figures (index = label after remapping)
 CLASS_NAMES = {
     "sshar_esp": ["sit_down", "stand_up", "pick_up", "fall", "lie_still", "walk", "run", "empty"],
+    "sshar_esp_7": ["sit_down", "stand_up", "pick_up", "fall", "walk", "run", "static"],
 }
 
 
@@ -513,7 +514,8 @@ def save_split_reports(model, loaders, device, save_dir, dataset=None, num_class
         <save_dir>/<split>/predictions.csv              true / pred / per-class probabilities
     and <save_dir>/summary_splits.csv with one row per split.
     """
-    names = CLASS_NAMES.get((dataset or "").lower())
+    ds_name = (dataset or "").lower()
+    names = CLASS_NAMES.get(f"{ds_name}_{num_classes}") or CLASS_NAMES.get(ds_name)
     was_training = model.training
     model.eval()
     rows = []

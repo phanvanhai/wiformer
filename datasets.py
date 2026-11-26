@@ -133,6 +133,13 @@ DEFAULT_LABEL_MAP = {
     label: idx for idx, label in enumerate(DEFAULT_SELECTED_LABELS)
 }
 
+# SSHAR 7 classes (labels=7): lie_still (act05) and empty (act08) merged into one "static"
+# (no-action) class. After the per-channel mean removal they differ only by noise.
+# 8-class index -> 7-class index: the 6 actions keep their order (0..5), static = 6.
+#   8: sit_down stand_up pick_up fall lie_still walk run empty
+#   7: sit_down stand_up pick_up fall walk run static
+SSHAR_MERGE_STATIC = {0: 0, 1: 1, 2: 2, 3: 3, 4: 6, 5: 4, 6: 5, 7: 6}
+
 INTEL_30_SUBCARRIERS = [
     -28, -26, -24, -22, -20, -18, -16, -14,
     -12, -10, -8, -6, -4, -2,
@@ -1074,7 +1081,8 @@ def load_dataset(
     The best epoch is chosen on val; test is only used for the final report.
 
     kwargs: case_split, split_mode, shape_option, num_sub (XRF55),
-            target_time, intel_shape, allowed_labels.
+            target_time, intel_shape, allowed_labels,
+            labels (SSHAR: 8 = all classes, 7 = lie_still + empty merged into "static").
     """
 
     name = name.lower()
@@ -1087,6 +1095,15 @@ def load_dataset(
     split_mode = _check_split_mode(kwargs.get("split_mode", DEFAULT_SPLIT_MODE))
     ratio = ":".join(map(str, SPLIT_RATIO))
     sshar = name.lower().startswith("sshar")
+    n_labels = kwargs.get("labels", 8)
+    if n_labels not in (7, 8):
+        raise ValueError(f"labels must be 7 or 8, got {n_labels}")
+    if n_labels == 7:
+        if not sshar:
+            raise ValueError("labels=7 (merged static class) is only defined for SSHAR")
+        if tuple(allowed_labels) != tuple(DEFAULT_SELECTED_LABELS):
+            raise ValueError("labels=7 needs the default allowed_labels (all 8 SSHAR classes)")
+        print("Labels = 7 (lie_still + empty merged into 'static' = class 6)")
     if name.lower() == "ut_har":
         print("Split = UT_HAR's own X_train / X_val / X_test (split_mode ignored)")
     elif split_mode == "repeat" and sshar:
@@ -1200,6 +1217,10 @@ def load_dataset(
     train_dataset = make("train")
     val_dataset = make("val")
     test_dataset = make("test")
+    if n_labels == 7:
+        for ds in (train_dataset, val_dataset, test_dataset):
+            for s in ds.samples:
+                s["label"] = SSHAR_MERGE_STATIC[s["label"]]
 
     # =======================================================
     for split_name, ds in (("train", train_dataset), ("val", val_dataset), ("test", test_dataset)):

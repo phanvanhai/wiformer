@@ -61,6 +61,18 @@ Các hành động chia làm hai nhóm. Đây là lý do cách chia tập khác 
 Tổng: 10 người × 8 hành động × 80 = **6400 bản ghi** (800 mỗi lớp, cân bằng).
 Tên hành động: act01 ngồi xuống, act02 đứng lên, act03 cúi nhặt, act04 ngã, act05 nằm im, act06 đi, act07 chạy, act08 phòng trống.
 
+### Số lớp khi train (`--labels`)
+
+| `--labels` | Lớp (chỉ số) | Mặc định cho |
+|---|---|---|
+| 8 | ngồi xuống 0, đứng lên 1, cúi nhặt 2, ngã 3, nằm im 4, đi 5, chạy 6, phòng trống 7 | các mô hình khác |
+| **7** | ngồi xuống 0, đứng lên 1, cúi nhặt 2, ngã 3, đi 4, chạy 5, **tĩnh 6** (= nằm im + phòng trống) | `wiformer_v5` |
+
+Với 7 lớp, nằm im và phòng trống được gộp thành một lớp "tĩnh", đóng vai trò lớp **không có hành động**.
+Sau khi trừ mức trung bình theo thời gian của từng kênh, hai trạng thái này chỉ còn khác nhau ở nhiễu.
+Lớp tĩnh có gấp đôi số mẫu của mỗi lớp hành động (1600 so với 800). Mức mất cân bằng 2:1 này nhẹ nên giữ
+nguyên, không đặt trọng số lớp. Thước đo chính là độ chính xác trên 6 hành động; 7 lớp là thước đo phụ.
+
 ## 3. Chia train / val / test (6:2:2)
 
 Mọi cách chia đều theo tỉ lệ **6:2:2**, giống benchmark `CodeForPaper/benchmark`
@@ -149,7 +161,7 @@ Test là 2/8 vị trí (`pos % 4 == case`, case 0..3). Phần còn lại chia ng
 | Learning rate | theo bài báo gốc của từng mô hình (AMCS-TCN: 0.001, Table 1 của bài) |
 | Chọn model | checkpoint có **val accuracy** cao nhất |
 | Dừng sớm (early stopping) | patience **10 epoch** theo val accuracy (xem bên dưới) |
-| Metric | accuracy, precision, recall, F1 (precision/recall/F1 lấy trung bình **macro** trên 8 lớp) |
+| Metric | accuracy, precision, recall, F1 (precision/recall/F1 lấy trung bình **macro** trên các lớp train, 8 hoặc 7, xem `--labels`) |
 | Seed | hiện chỉ dùng 42 để đánh giá nhanh, sau này có thể thêm seed |
 
 **Dừng sớm**, cách tính cụ thể để mọi mô hình làm giống nhau:
