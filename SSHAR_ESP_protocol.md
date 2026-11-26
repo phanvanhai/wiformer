@@ -3,10 +3,10 @@
 Note này cố định **thông số thiết bị, cấu trúc dữ liệu, cách chia train/val/test và thiết lập train**
 cho dataset SSHAR ESP. Mọi mô hình trong benchmark (AMCS-TCN và các mô hình khác) đều phải theo đúng
 note này để kết quả so sánh được với nhau. Code tham chiếu: `datasets/csi_dataset.py`
-(`SSHAR_USER_CASES`, `sshar_user_split_of`, `sshar_split_of`, `_sshar_index`), nhánh `sshar_esp`.
+(`SSHAR_USER_PAIRS`, `sshar_user_folds`, `sshar_user_split_of`, `sshar_split_of`, `_sshar_index`), nhánh `sshar_esp`.
 
-**Mọi cách chia đều 6:2:2** (3840 / 1280 / 1280). Cross-user case 0: train 6 người
-`01, 02, 04, 09, 10, 11` / val `03, 12` / test `13, 14`. Chi tiết ở mục 3.
+**Mọi cách chia đều 6:2:2** (3840 / 1280 / 1280). Cross-user là 5-fold: fold 0 train 6 người
+`01, 03, 04, 09, 11, 12` / val `02, 10` / test `13, 14`. Chi tiết ở mục 3.
 
 Cách gọi trên Kaggle (biến cấu hình, tham số dòng lệnh, tên run, cấu trúc kết quả, cell mẫu):
 [kaggle_run_convention.md](kaggle_run_convention.md).
@@ -76,39 +76,34 @@ Chia **theo người**: mỗi người chỉ thuộc đúng một tập, nên t�
 thấy khi train. Mỗi người có 640 bản ghi (8 hành động × 80), nên 6 / 2 / 2 người tương ứng
 3840 / 1280 / 1280 mẫu.
 
-Dùng lại 5 case của benchmark (`USER_CASES['sshar']`): mỗi case cho 8 người, 2 người còn lại là
-**test** (giữ nguyên như protocol cũ). Trong 8 người đó, **2 người làm val**: người val của protocol
-cũ (`SSHAR_VAL_SUBJECTS`) và thêm một người chọn bằng `random.Random(42)`, lần lượt từng case, không
-trùng người val của các case khác (`SSHAR_VAL_SUBJECTS_2`).
+**5-fold theo người.** 10 người được ghép thành 5 cặp cố định (`SSHAR_USER_PAIRS`). Fold f: test = cặp f,
+val = cặp (f + 1) mod 5, train = 6 người còn lại. Mỗi người được **test đúng một lần** và làm val đúng
+một lần. Báo cáo trung bình ± độ lệch chuẩn qua 5 fold.
 
-| Case | Train (6 người) | Val (2 người) | Test (2 người) |
+| Fold | Train (6 người) | Val (2 người) | Test (2 người) |
 |---|---|---|---|
-| **0** | **01, 02, 04, 09, 10, 11** | **03, 12** | **13, 14** |
-| 1 | 01, 03, 09, 11, 12, 14 | 04, 13 | 02, 10 |
-| 2 | 02, 04, 09, 10, 12, 13 | 01, 14 | 03, 11 |
-| 3 | 03, 04, 10, 12, 13, 14 | 02, 11 | 01, 09 |
-| 4 | 01, 02, 04, 11, 13, 14 | 09, 10 | 03, 12 |
+| **0** | **01, 03, 04, 09, 11, 12** | **02, 10** | **13, 14** |
+| 1 | 01, 04, 09, 12, 13, 14 | 03, 11 | 02, 10 |
+| 2 | 02, 04, 10, 12, 13, 14 | 01, 09 | 03, 11 |
+| 3 | 02, 03, 10, 11, 13, 14 | 04, 12 | 01, 09 |
+| 4 | 01, 02, 03, 09, 10, 11 | 13, 14 | 04, 12 |
 
-Lưu ý: 5 case này không phủ đều mọi người (người 03 nằm trong test ở 2 case, người 04 không bao giờ
-nằm trong test). Nếu chạy nhiều case để lấy trung bình thì cần nhắc điều này khi báo cáo.
+Bộ 5 case cũ (người 03 bị test 2 lần, người 04 không bao giờ được test) đã bỏ. Kết quả cross-user cũ
+không so sánh trực tiếp được với các fold mới, trừ tập test của fold 0 (vẫn là 13, 14).
 
 ```python
-SSHAR_USER_CASES = [
-    [1, 2, 3, 4, 9, 10, 11, 12],
-    [1, 3, 4, 9, 11, 12, 13, 14],
-    [1, 2, 4, 9, 10, 12, 13, 14],
-    [2, 3, 4, 10, 11, 12, 13, 14],
-    [1, 2, 4, 9, 10, 11, 13, 14],
-]
-SSHAR_VAL_SUBJECTS   = [12, 13, 1, 2, 10]   # val thứ nhất (protocol cũ)
-SSHAR_VAL_SUBJECTS_2 = [3, 4, 14, 11, 9]    # val thứ hai (random.Random(42))
+SSHAR_ALL_SUBJECTS = [1, 2, 3, 4, 9, 10, 11, 12, 13, 14]
+SSHAR_USER_PAIRS = [(13, 14), (2, 10), (3, 11), (1, 9), (4, 12)]
+
+def sshar_user_folds(user_case=0):
+    test = list(SSHAR_USER_PAIRS[user_case])
+    val = list(SSHAR_USER_PAIRS[(user_case + 1) % 5])
+    train = [s for s in SSHAR_ALL_SUBJECTS if s not in test + val]
+    return train, val, test
 
 def sshar_user_split_of(subject_id, user_case=0):
-    if subject_id not in SSHAR_USER_CASES[user_case]:
-        return 'test'
-    if subject_id in (SSHAR_VAL_SUBJECTS[user_case], SSHAR_VAL_SUBJECTS_2[user_case]):
-        return 'val'
-    return 'train'
+    _, val, test = sshar_user_folds(user_case)
+    return 'test' if subject_id in test else 'val' if subject_id in val else 'train'
 ```
 
 ### 3B. Chia theo lần lặp (`--split_mode repeat`)
@@ -179,7 +174,7 @@ std 0.02, min-max theo min/max toàn cục của tập train, và giữ đủ T 
 
 - [ ] Đọc đủ 3 receiver, và bản ghi nào cũng có đủ ở cả ba
 - [ ] Nhãn `act01..08` ánh xạ sang `0..7`
-- [ ] Chia 6:2:2 theo mục 3 (cross-user case 0: train 01, 02, 04, 09, 10, 11 / val 03, 12 / test 13, 14,
+- [ ] Chia 6:2:2 theo mục 3 (cross-user fold 0: train 01, 03, 04, 09, 11, 12 / val 02, 10 / test 13, 14,
       hoặc theo lần lặp); số mẫu khớp **3840 / 1280 / 1280** (mỗi lớp 480 / 160 / 160)
 - [ ] Ghi rõ cách chia trong báo cáo (cross-user và case số mấy, hoặc theo lần lặp)
 - [ ] Thống kê chuẩn hoá (nếu có) chỉ tính trên **train**

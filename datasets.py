@@ -45,9 +45,11 @@ def _check_split_mode(split_mode):
 
 # ---- SSHAR: fixed train/val/test rules (SSHAR_ESP_protocol.md, 6:2:2) ----
 # repeat and user both give 3840 / 1280 / 1280 samples.
-SSHAR_VAL_SUBJECTS = [12, 13, 1, 2, 10]   # 1st val subject of user case 0..4 (old protocol)
-SSHAR_VAL_SUBJECTS_2 = [3, 4, 14, 11, 9]  # 2nd val subject (random.Random(42), one per case)
 SSHAR_ALL_SUBJECTS = [1, 2, 3, 4, 9, 10, 11, 12, 13, 14]
+# Cross-user 5-fold: the 10 subjects form 5 disjoint pairs. Fold f: test = pair f,
+# val = pair (f + 1) % 5, train = the other 6 subjects -> every subject is tested exactly once
+# and used for validation exactly once.
+SSHAR_USER_PAIRS = [(13, 14), (2, 10), (3, 11), (1, 9), (4, 12)]
 
 
 def sshar_repeat_split_of(pos, direction, rep):
@@ -60,14 +62,20 @@ def sshar_repeat_split_of(pos, direction, rep):
     return "test" if rep == 5 else "val" if rep == 4 else "train"
 
 
+def sshar_user_folds(user_case=0):
+    """(train, val, test) subject lists of cross-user fold `user_case` (0..4)."""
+    n = len(SSHAR_USER_PAIRS)
+    if not 0 <= user_case < n:
+        raise ValueError(f"SSHAR cross-user: case_split must be in 0..{n - 1}, got {user_case}")
+    test, val = list(SSHAR_USER_PAIRS[user_case]), list(SSHAR_USER_PAIRS[(user_case + 1) % n])
+    train = [s for s in SSHAR_ALL_SUBJECTS if s not in test + val]
+    return train, val, test
+
+
 def sshar_user_split_of(subject_id, user_case=0):
-    """Cross-user 6:2:2: 6 train / 2 val / 2 test subjects (test = the 2 subjects
-    outside USER_CASES['sshar'][case], val = SSHAR_VAL_SUBJECTS[case] + SSHAR_VAL_SUBJECTS_2[case])."""
-    if subject_id not in USER_CASES["sshar"][user_case]:
-        return "test"
-    if subject_id in (SSHAR_VAL_SUBJECTS[user_case], SSHAR_VAL_SUBJECTS_2[user_case]):
-        return "val"
-    return "train"
+    """Cross-user 5-fold, 6:2:2 (6 train / 2 val / 2 test subjects), see SSHAR_USER_PAIRS."""
+    _, val, test = sshar_user_folds(user_case)
+    return "test" if subject_id in test else "val" if subject_id in val else "train"
 
 
 # ---- XRF55: 20 repetitions per (user, action) -> rep 1-12 / 13-16 / 17-20 (6:2:2) ----
@@ -146,13 +154,6 @@ USER_CASES = {
         [1, 2, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 22, 23, 24, 25, 26, 27, 28, 29],
         [1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 21, 23, 24, 25, 26, 29, 30]
     ],
-    "sshar": [
-        [1, 2, 3, 4, 9, 10, 11, 12],
-        [1, 3, 4, 9, 11, 12, 13, 14],
-        [1, 2, 4, 9, 10, 12, 13, 14],
-        [2, 3, 4, 10, 11, 12, 13, 14],
-        [1, 2, 4, 9, 10, 11, 13, 14],
-    ]
 }
 # ============================================================
 # Utility
@@ -1092,11 +1093,9 @@ def load_dataset(
         print("Split mode = repeat (6:2:2 by repetition: dir00 rep1-6/7-8/9-10; "
               "dir01/02 rep1-3/4/5 of both directions)")
     elif split_mode == "user" and sshar:
-        users = USER_CASES["sshar"][case_split]
-        val_u = {SSHAR_VAL_SUBJECTS[case_split], SSHAR_VAL_SUBJECTS_2[case_split]}
-        test_u = sorted(set(SSHAR_ALL_SUBJECTS) - set(users))
-        print(f"Split mode = user (6:2:2), case = {case_split} | "
-              f"train: {sorted(set(users) - val_u)} | val: {sorted(val_u)} | test: {test_u}")
+        train_u, val_u, test_u = sshar_user_folds(case_split)
+        print(f"Split mode = user (5-fold, 6:2:2), fold = {case_split} | "
+              f"train: {train_u} | val: {val_u} | test: {test_u}")
     elif split_mode == "repeat":
         print("Split mode = repeat (6:2:2 by repetition: rep 1-12 / 13-16 / 17-20)")
     elif split_mode == "user":
