@@ -18,6 +18,7 @@
 #
 # ---------------------------- CÁC TUỲ CHỌN ----------------------------
 # VARIANTS (wiformer_v5, MODEL = 'wiformer_v5'; python ablation.py --model=wiformer_v5 --list)
+#   Kiến trúc: WiFormer_v5_Architecture.md (tạm lấy gate làm kiến trúc chính)
 #   (nhánh này: sshar luôn 7 lớp = 6 hành động + 'tĩnh' (nằm im + phòng trống))
 #   full       v5: mỗi khoảnh khắc (window) 2 nhánh: hình dạng (Conv -> Khối 2) + tốc độ (phổ Hann
 #              trung bình qua rx, sub), gộp Linear(2D -> D), modality dropout 0.5 -> Khối 3 (~3.3 h ESP)
