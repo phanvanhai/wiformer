@@ -18,7 +18,7 @@
 #
 # ---------------------------- CÁC TUỲ CHỌN ----------------------------
 # VARIANTS (wiformer_v5, MODEL = 'wiformer_v5'; python ablation.py --model=wiformer_v5 --list)
-#   (v5 train 7 lớp: 6 hành động + 'tĩnh' = nằm im + phòng trống; --labels=8 để train 8 lớp)
+#   (nhánh này: sshar luôn 7 lớp = 6 hành động + 'tĩnh' (nằm im + phòng trống))
 #   full       v5: mỗi khoảnh khắc (window) 2 nhánh: hình dạng (Conv -> Khối 2) + tốc độ (phổ Hann
 #              trung bình qua rx, sub), gộp Linear(2D -> D), modality dropout 0.5 -> Khối 3 (~3.3 h ESP)
 #              (= wiformer_v4 hybrid_drop + Hann)
@@ -56,8 +56,6 @@
 #     --epochs=100            số epoch (mặc định 100; vd --epochs=2 để chạy thử)
 #     --patience=0            dừng sớm sau N epoch val không tăng (mặc định 0 = tắt)
 #     --lr=1e-3  --optimizer=adam|adamw  --weight_decay=0  --batch_size=32  --warmup_epochs=5
-#     --labels=7|8            sshar: 7 = gộp nằm im + phòng trống thành lớp 'tĩnh' (mặc định cho
-#                             wiformer_v5), 8 = đủ 8 lớp (mặc định cho các model khác)
 #     --class_weights=auto    CE có trọng số: 'auto' (nghịch tần suất tập train) hoặc
 #                             danh sách K số, vd '--class_weights=1,1,0.8,1,0.8,1.5,2'
 #     --scheduler=reducelronplateau --scheduler-patience=4 --scheduler-gamma=0.5
