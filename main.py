@@ -97,6 +97,7 @@ def parse_args():
             "cnn_gru",
             "wiformer",
             "wiformer_v4",
+            "wiformer_v5",
         ],
         help="Model name",
     )
@@ -133,7 +134,7 @@ def parse_args():
         type=int,
         default=None,
         help="Early stopping: stop after N epochs without val-acc improvement (0 = off). "
-             "Default: 0 for wiformer / wiformer_v4 (full cosine schedule), 10 for the other models",
+             "Default: 0 for wiformer / wiformer_v4 / wiformer_v5 (full cosine schedule), 10 for the other models",
     )
 
     parser.add_argument(
@@ -348,9 +349,12 @@ def parse_args():
                         help="WiFormer v4 core ablation (Block 1 views / remove one block); "
                              "freq_mean = spectral view only + mean over Rx x Sub; "
                              "hybrid = [Conv -> Block 2] fused per window with the averaged spectrum")
-    parser.add_argument("--mod_drop", type=float, default=0.0,
-                        help="WiFormer v4 hybrid: training-only probability of zeroing the Block 2 "
-                             "branch h_k (per sample), so the averaged-spectrum branch is also used")
+    parser.add_argument("--mod_drop", type=float, default=None,
+                        help="Training-only probability of zeroing the Block 2 branch h_k (per sample), "
+                             "so the averaged-spectrum branch is also used. "
+                             "Default: 0 for wiformer_v4 (ablation hybrid only), 0.5 for wiformer_v5")
+    parser.add_argument("--v5_ablation", type=str, default="full", choices=["full"],
+                        help="WiFormer v5 ablation")
     parser.add_argument("--norm", type=str, default="sub", choices=["sub", "none"],
                         help="WiFormer v4 per-sample normalisation: sub = minus mean per (rx, sub), / std per rx "
                              "(default); none = keep the loader's input (UT_HAR: per-sample min-max), "
@@ -415,7 +419,7 @@ def resolve_class_weights(spec, train_loader, num_classes):
 def get_default_train_cfg(model_name):
     """Per-model defaults for lr / batch size / optimizer."""
     model_name = model_name.lower()
-    if model_name in ("wiformer", "wiformer_v4"):
+    if model_name in ("wiformer", "wiformer_v4", "wiformer_v5"):
         # Adam, lr=1e-3 (as in common WiFi-HAR baselines). Warmup + cosine
         # are kept for the Transformer so the large initial lr stays stable.
         # No early stopping, so the cosine schedule runs to the end
@@ -440,7 +444,7 @@ def get_default_train_cfg(model_name):
 
 def get_default_scheduler_cfg(model_name, epochs=100, warmup_epochs=0):
     model_name = model_name.lower()
-    if model_name in ("wiformer", "wiformer_v4"):
+    if model_name in ("wiformer", "wiformer_v4", "wiformer_v5"):
         return {
             "name": "cosineannealinglr",
             "args": {
@@ -502,7 +506,7 @@ def main():
     dataset_kwargs = {}
     dataset_kwargs["case_split"] = args.case_split
     dataset_kwargs["split_mode"] = args.split_mode
-    if args.model == "wiformer_v4" and args.dataset.startswith("sshar") and args.norm == "sub":
+    if args.model in ("wiformer_v4", "wiformer_v5") and args.dataset.startswith("sshar") and args.norm == "sub":
         # WiFormer v4 normalises every sample itself (mean per (rx, sub), std per rx),
         # which cancels any global z-score -> skip the dataset's mean/std pass.
         dataset_kwargs["normalize"] = False
@@ -573,7 +577,28 @@ def main():
         model_kwargs.update(
             ablation=args.v4_ablation,
             norm=args.norm,
-            mod_drop=args.mod_drop,
+            mod_drop=args.mod_drop or 0.0,
+            window_sec=args.window_sec,
+            fs=args.fs,
+            window=args.window,
+            stride=args.stride,
+            d_model=args.d_model,
+            feat=args.feat,
+            k1_conv=args.k1_conv,
+            k1_pool=args.k1_pool,
+            k2_layers=args.k2_layers,
+            k2_heads=args.k2_heads,
+            k2_ff=args.k2_ff,
+            k3_layers=args.k3_layers,
+            k3_heads=args.k3_heads,
+            k3_ff=args.k3_ff,
+            dropout=args.dropout,
+        )
+    elif args.model == "wiformer_v5":
+        model_kwargs.update(
+            ablation=args.v5_ablation,
+            norm=args.norm,
+            mod_drop=0.5 if args.mod_drop is None else args.mod_drop,
             window_sec=args.window_sec,
             fs=args.fs,
             window=args.window,

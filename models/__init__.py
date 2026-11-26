@@ -9,6 +9,7 @@ from .vit import ViT
 from .cnn_gru import CNN_GRU
 from .wiformer import WiFormer
 from .wiformer_v4 import WiFormerV4
+from .wiformer_v5 import WiFormerV5
 
 SUPPORTED_MODELS = [
     "mlp",
@@ -20,6 +21,7 @@ SUPPORTED_MODELS = [
     "cnn_gru",
     "wiformer",
     "wiformer_v4",
+    "wiformer_v5",
 ]
 
 
@@ -85,6 +87,13 @@ def get_model(model_name, input_shape, num_classes, **kwargs):
 
     if model_name == "wiformer_v4":
         return WiFormerV4(
+            input_shape=input_shape,
+            num_classes=num_classes,
+            **kwargs,
+        )
+
+    if model_name == "wiformer_v5":
+        return WiFormerV5(
             input_shape=input_shape,
             num_classes=num_classes,
             **kwargs,

@@ -154,11 +154,20 @@ V4_VARIANTS = {
 V4_CORE = ["full", "wo_fft", "wo_conv", "wo_block1", "wo_block2", "wo_block3"]
 V4_SETS = {"core": V4_CORE, "all": list(V4_VARIANTS)}
 
+# ---- WiFormer v5 (--model=wiformer_v5) ----
+V5_VARIANTS = {
+    "full": ("Full", "WiFormer v5 (shape: Conv -> Block 2; speed: averaged spectrum; mod_drop 0.5)",
+             ["--v5_ablation=full"]),
+}
+V5_SETS = {"core": list(V5_VARIANTS), "all": list(V5_VARIANTS)}
+
 
 def tables(model):
     """(variants, sets) of the given model."""
     if model == "wiformer_v4":
         return V4_VARIANTS, V4_SETS
+    if model == "wiformer_v5":
+        return V5_VARIANTS, V5_SETS
     return VARIANTS, SETS
 
 METRIC_KEYS = [
@@ -172,7 +181,7 @@ def parse_args():
     p.add_argument("--dataset", type=str, default=None,
                    choices=["ut_har", "xrf55", "sshar_esp", "sshar_asus"])
     p.add_argument("--data_root", type=str, default=None)
-    p.add_argument("--model", type=str, default="wiformer", choices=["wiformer", "wiformer_v4"])
+    p.add_argument("--model", type=str, default="wiformer", choices=["wiformer", "wiformer_v4", "wiformer_v5"])
     p.add_argument("--result_root", type=str, default=None,
                    help="default: results/ablation (wiformer), results/ablation_v4 (wiformer_v4)")
     p.add_argument("--set", type=str, default="core", choices=list(SETS),
@@ -307,13 +316,15 @@ def summarize(args, names, tag):
 def main():
     args = parse_args()
     if args.result_root is None:
-        args.result_root = {"wiformer_v4": "results/ablation_v4"}.get(args.model, "results/ablation")
+        args.result_root = {"wiformer_v4": "results/ablation_v4",
+                            "wiformer_v5": "results/ablation_v5"}.get(args.model, "results/ablation")
     if args.split_mode is None:
         args.split_mode = "repeat"
     variants, sets = tables(args.model)
 
     if args.list:
-        groups = ((("v4 core (Block 1 views / remove one block)", V4_VARIANTS),) if args.model == "wiformer_v4" else
+        groups = ((("v5", V5_VARIANTS),) if args.model == "wiformer_v5" else
+                  (("v4 core (Block 1 views / remove one block)", V4_VARIANTS),) if args.model == "wiformer_v4" else
                   (("core (remove one block at a time)", CORE_VARIANTS),
                    ("design (choices inside blocks)", DESIGN_VARIANTS),
                    ("scale (bigger blocks)", SCALE_VARIANTS),

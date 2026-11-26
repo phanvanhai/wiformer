@@ -17,6 +17,11 @@
 # (run đã xong sẽ được bỏ qua).
 #
 # ---------------------------- CÁC TUỲ CHỌN ----------------------------
+# VARIANTS (wiformer_v5, MODEL = 'wiformer_v5'; python ablation.py --model=wiformer_v5 --list)
+#   full       v5: mỗi khoảnh khắc (window) 2 nhánh: hình dạng (Conv -> Khối 2) + tốc độ (phổ trung bình
+#              qua rx, sub), gộp Linear(2D -> D), modality dropout 0.5 -> Khối 3 (~3.3 h ESP)
+#              (= wiformer_v4 hybrid_drop)
+#
 # VARIANTS (wiformer_v4, xem: python ablation.py --model=wiformer_v4 --list)
 #   Kiến trúc: WiFormer_v4_Architecture.md, WiFormer_Paper.md
 #   full       v4 đầy đủ                                                [mô hình đề xuất]
@@ -104,14 +109,14 @@ DATA_PATHS = {
 }
 
 REPO_URL   = 'https://github.com/phanvanhai/wiformer.git'
-BRANCH     = 'cross-user'
-MODEL      = 'wiformer_v4'   # wiformer_v4 | wiformer (v2)
+BRANCH     = 'wiformer_v5'
+MODEL      = 'wiformer_v5'   # wiformer_v5 | wiformer_v4 | wiformer (v2)
 DATASET    = 'sshar_esp'     # sshar_esp | ut_har
 SPLIT_MODE = 'user'          # repeat | user | position (đều 6:2:2) ; ut_har: bỏ qua
 CASE       = 0               # user: fold 0..4 / position: 0..3
-VARIANTS   = ['freq_mean', 'freq_mean_e200', 'full']   # danh sách đầy đủ: xem "CÁC TUỲ CHỌN" ở đầu file
+VARIANTS   = ['full']   # danh sách đầy đủ: xem "CÁC TUỲ CHỌN" ở đầu file
 EXTRA      = ''              # xem "CÁC TUỲ CHỌN"; mặc định 100 epoch; vd '--epochs=2' để chạy thử
-RUN_TAG    = 'ablation_v4'
+RUN_TAG    = 'ablation_v5'
 PREV_RESULTS = ''            # vd '/kaggle/input/<output-phien-truoc>/results/ablation_v4'
 
 import os, subprocess, shutil, shlex, time
