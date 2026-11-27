@@ -18,14 +18,25 @@
 #
 # ---------------------------- CÁC TUỲ CHỌN ----------------------------
 # VARIANTS (wiformer_v5, MODEL = 'wiformer_v5'; python ablation.py --model=wiformer_v5 --list)
-#   Kiến trúc: WiFormer_v5_Architecture.md (tạm lấy gate làm kiến trúc chính)
+#   Kiến trúc: WiFormer_v5_Architecture.md. Kiến trúc chính = full (gộp tuyến tính).
 #   (nhánh này: sshar luôn 7 lớp = 6 hành động + 'tĩnh' (nằm im + phòng trống))
+#   Mỗi account chạy 1 CASE (fold 0..4); mỗi session một bộ VARIANTS (A, B, C). Thời gian: ESP, T4.
 #   full       v5: mỗi khoảnh khắc (window) 2 nhánh: hình dạng (Conv -> Khối 2) + tốc độ (phổ Hann
-#              trung bình qua rx, sub), gộp Linear(2D -> D), modality dropout 0.5 -> Khối 3 (~3.3 h ESP)
-#              (= wiformer_v4 hybrid_drop + Hann)
-#   gate       full, gộp bằng cổng vô hướng mỗi khoảnh khắc: g = sigmoid(w.[h||a] + b),
-#              z = g h + (1 - g) a (h, a qua LayerNorm), vẫn modality dropout 0.5; lưu gate.json
-#   wo_shape   chỉ nhánh tốc độ (phổ Hann) -> Khối 3 (~1 h ESP)
+#              trung bình qua rx, sub), gộp Linear(2D -> D), modality dropout 0.5 -> Khối 3 (~3.3 h)
+#   --- session A (đã xong) ---
+#   gate       full, gộp bằng cổng vô hướng mỗi khoảnh khắc (h, a qua LayerNorm); lưu gate.json (~3.4 h)
+#   wo_shape   chỉ nhánh tốc độ (phổ Hann) -> Khối 3 (~0.3 h)
+#   --- session B: VARIANTS = ['wo_mdrop', 'wo_speed', 'shape_mean'] (~9-10 h) ---
+#   wo_mdrop   full, không modality dropout (--mod_drop=0) (~3.3 h)
+#   wo_speed   chỉ nhánh hình dạng (Conv -> Khối 2) -> Khối 3 (~3.3 h)
+#   shape_mean Khối 2 = trung bình 168 token Rx x Sub của khoảnh khắc (~3 h)
+#   --- session C: VARIANTS = ['wo_order', 'sym_bias', 'no_overlap', 'no_win'] (~9-10 h) ---
+#   wo_order   Khối 3 = trung bình các khoảnh khắc (mất thứ tự) (~2.5-3 h)
+#   sym_bias   bias Khối 3 đối xứng b[|i-j|] (không phân biệt trước / sau) (~3.3 h)
+#   no_overlap stride = W = 64 (K = 15) (~1.7 h)
+#   no_win     một khoảnh khắc = cả chuỗi (W = T = 1000, K = 1) (~1.7 h)
+#   Nếu một session vượt 12 h: chạy tiếp ở phiên sau với PREV_RESULTS (run đã xong được bỏ qua).
+#   Tổng hợp 5 fold: python summarize_folds.py --root <thư mục kết quả> --variants full <biến thể...>
 #
 # VARIANTS (wiformer_v4, xem: python ablation.py --model=wiformer_v4 --list)
 #   Kiến trúc: WiFormer_v4_Architecture.md, WiFormer_Paper.md
@@ -119,7 +130,7 @@ MODEL      = 'wiformer_v5'   # wiformer_v5 | wiformer_v4 | wiformer (v2)
 DATASET    = 'sshar_esp'     # sshar_esp | ut_har
 SPLIT_MODE = 'user'          # repeat | user | position (đều 6:2:2) ; ut_har: bỏ qua
 CASE       = 0               # user: fold 0..4 / position: 0..3
-VARIANTS   = ['full', 'gate', 'wo_shape']   # mỗi account 1 CASE (0..4); danh sách: "CÁC TUỲ CHỌN"
+VARIANTS   = ['wo_mdrop', 'wo_speed', 'shape_mean']   # session B; mỗi account 1 CASE (0..4); xem "CÁC TUỲ CHỌN"
 EXTRA      = ''              # xem "CÁC TUỲ CHỌN"; mặc định 100 epoch; vd '--epochs=2' để chạy thử
 RUN_TAG    = 'ablation_v5'
 PREV_RESULTS = ''            # vd '/kaggle/input/<output-phien-truoc>/results/ablation_v4'

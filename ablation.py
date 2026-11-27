@@ -155,15 +155,37 @@ V4_CORE = ["full", "wo_fft", "wo_conv", "wo_block1", "wo_block2", "wo_block3"]
 V4_SETS = {"core": V4_CORE, "all": list(V4_VARIANTS)}
 
 # ---- WiFormer v5 (--model=wiformer_v5) ----
+# full = main design (linear fusion); every other variant changes one thing of full.
 V5_VARIANTS = {
-    "full": ("Full", "WiFormer v5 (shape: Conv -> Block 2; speed: averaged Hann spectrum; mod_drop 0.5)",
-             ["--v5_ablation=full"]),
-    "gate": ("Gate fusion", "Scalar gate per moment instead of the linear fusion (mod_drop kept)",
+    "full": ("Full", "WiFormer v5 (shape: Conv -> Block 2; speed: averaged Hann spectrum; "
+                     "linear fusion; mod_drop 0.5)", ["--v5_ablation=full"]),
+    # session A
+    "gate": ("Fusion", "Scalar gate per moment instead of the linear fusion (mod_drop kept)",
              ["--v5_ablation=full", "--fusion=gate"]),
-    "wo_shape": ("w/o shape", "Speed branch only (averaged Hann spectrum -> Linear -> Block 3)",
+    "wo_shape": ("Branch", "Speed branch only (averaged Hann spectrum -> Linear -> Block 3)",
                  ["--v5_ablation=wo_shape"]),
+    # session B
+    "wo_mdrop": ("Fusion", "No modality dropout (mod_drop = 0)", ["--v5_ablation=full", "--mod_drop=0"]),
+    "wo_speed": ("Branch", "Shape branch only (Conv -> Block 2 -> Linear -> Block 3)",
+                 ["--v5_ablation=wo_speed"]),
+    "shape_mean": ("Block 2", "Block 2 = mean of the Rx x Sub tokens of the moment",
+                   ["--v5_ablation=shape_mean"]),
+    # session C
+    "wo_order": ("Block 3", "Block 3 = mean over the moments (no order)", ["--v5_ablation=wo_order"]),
+    "sym_bias": ("Block 3", "Symmetric Block 3 bias b[|i - j|] (no before / after)",
+                 ["--v5_ablation=full", "--k3_bias=sym"]),
+    "no_overlap": ("Window", "Moments without overlap (stride = W = 64, K = 15)",
+                   ["--v5_ablation=full", "--stride=64"]),
+    "no_win": ("Window", "One moment = the whole sequence (W = T = 1000, K = 1)",
+               ["--v5_ablation=full", "--window=1000"]),
 }
-V5_SETS = {"core": list(V5_VARIANTS), "all": list(V5_VARIANTS)}
+V5_SETS = {
+    "A": ["full", "gate", "wo_shape"],
+    "B": ["wo_mdrop", "wo_speed", "shape_mean"],
+    "C": ["wo_order", "sym_bias", "no_overlap", "no_win"],
+    "all": list(V5_VARIANTS),
+}
+V5_SETS["core"] = V5_SETS["all"]
 
 
 def tables(model):

@@ -6,9 +6,9 @@ Code: [models/wiformer_v5.py](models/wiformer_v5.py). Các lớp dùng chung (Co
 - **Nhánh hình dạng:** mỗi kênh (rx, sub) nhìn chuyển động theo một cách khác nhau. Nhánh này nhìn từng kênh bằng Conv, rồi gộp có chọn lọc qua attention RX × subcarrier (Khối 2), ra `h_k`.
 - **Nhánh tốc độ:** tần số Doppler của cơ thể gần như giống nhau trên mọi kênh. Nhánh này lấy phổ (cửa sổ Hann) rồi trung bình qua mọi kênh, ra `a_k`.
 
-Hai nhánh được gộp theo từng khoảnh khắc bằng một **cổng vô hướng** `g_k`. Khối 3 đọc chuỗi khoảnh khắc theo thứ tự, dùng bias tương đối có dấu. Toàn mô hình có một classifier, loss là CE.
+Hai nhánh được gộp theo từng khoảnh khắc bằng một lớp **tuyến tính** `Linear(2D → D)([h_k ‖ a_k])`. Khi train có modality dropout trên nhánh hình dạng. Khối 3 đọc chuỗi khoảnh khắc theo thứ tự, dùng bias tương đối có dấu. Toàn mô hình có một classifier, loss là CE.
 
-> **Cơ chế gộp: tạm dùng gate.** Trong code, gate là biến thể `gate` (`--fusion=gate`). Biến thể `full` trong code hiện vẫn gộp tuyến tính `Linear(2D → D)([h_k ‖ a_k])`. Lựa chọn cuối cùng sẽ chốt sau khi có kết quả 5 fold của `full`, `gate` và `wo_shape`. Nếu hai cách hòa nhau thì giữ gate, vì gate dễ giải thích hơn. Khi đã chốt, phương án còn lại trở thành ablation.
+> **Cơ chế gộp: tuyến tính** (biến thể `full`). Gộp bằng cổng vô hướng (`gate`) đã được thử trên 5 fold và kém hơn rõ: 90.25 so với 92.90 (accuracy 6 hành động, McNemar p < 1e-4). Cổng bị sập về nhánh tốc độ, xem mục 4. `gate` giờ là một ablation.
 
 ---
 
@@ -36,7 +36,7 @@ Shape ghi theo SSHAR-ESP:
 | Tiền xử lý | Chuẩn hóa theo mẫu | Chỉ giữ anten 0 của mỗi RX. Trừ mean theo thời gian cho từng (rx, sub). Chia cho một std chung của (mẫu, rx), nên tỉ lệ biên độ giữa các subcarrier được giữ nguyên |
 | Nhánh hình dạng | Bức tranh không gian của khoảnh khắc | Conv1d ×3 → pool flat4 → Linear → token `Linear(D → D)` cho mỗi (rx, sub, window). Khối 2: attention trên R·S token + CLS → `h_k` |
 | Nhánh tốc độ | Phổ chuyển động của khoảnh khắc | Trừ mean của window → nhân Hann → `log1p\|rfft\|`, bỏ DC (32 bin) → trung bình qua (rx, sub) → `Linear(32 → D)` → `a_k` |
-| Gộp (gate) | Trộn hai nhánh theo từng khoảnh khắc | `h' = LN(h)`, `a' = LN(a)` (không affine). `g_k = σ(w·[h'_k ‖ a'_k] + b)`. `z_k = g_k·h'_k + (1 − g_k)·a'_k`. Modality dropout 0.5 |
+| Gộp (tuyến tính) | Trộn hai nhánh theo từng khoảnh khắc | `z_k = Linear(2D → D)([h_k ‖ a_k])`, cùng một lớp cho mọi khoảnh khắc. Modality dropout 0.5 |
 | Khối 3 | Diễn biến giữa các khoảnh khắc | Bias có dấu `b[i−j]`, CLS có bias riêng. 6 lớp |
 | Classifier | | LayerNorm · Dropout · Linear(D → C). Loss = CE |
 
@@ -47,7 +47,7 @@ Shape ghi theo SSHAR-ESP:
 skinparam defaultFontName Arial
 skinparam ActivityBorderColor #555555
 skinparam ArrowColor #555555
-title WiFormer v5 — tổng quan (gộp bằng gate)
+title WiFormer v5 — tổng quan
 
 start
 :CSI biên độ đầu vào
@@ -68,8 +68,8 @@ fork again
   trung bình qua (rx, sub) → Linear
   a_k (B, 30, D); <<#E3F2FD>>
 end fork
-:Gộp bằng cổng (Hình 3)
-z_k = g_k·LN(h_k) + (1 − g_k)·LN(a_k)
+:Gộp tuyến tính (Hình 3)
+z_k = Linear(2D → D)([h_k ‖ a_k])
 train: zero h với xác suất 0.5 / mẫu
 (B, 30, D); <<#F3E5F5>>
 :Khối 3 — Transformer thời gian (Hình 5)
@@ -124,7 +124,7 @@ Ghi chú:
 - **Bỏ bin DC:** nhánh tốc độ chỉ mang thông tin dao động.
 - **Độ phân giải phổ:** fs/W = 3.125 Hz.
 
-### Hình 3 — Gộp bằng cổng
+### Hình 3 — Gộp tuyến tính
 
 ```plantuml
 @startuml
@@ -132,26 +132,24 @@ skinparam defaultFontName Arial
 skinparam ActivityBackgroundColor #F3E5F5
 skinparam ActivityBorderColor #555555
 skinparam ArrowColor #555555
-title Gộp bằng cổng — một số vô hướng cho mỗi khoảnh khắc
+title Gộp tuyến tính — cùng một lớp cho mọi khoảnh khắc
 
 start
 :h_k, a_k (B, 30, D);
-:h'_k = LayerNorm(h_k), a'_k = LayerNorm(a_k)
-không affine → hai nhánh cùng thang đo;
-:train: với mỗi mẫu, h' = 0 với xác suất 0.5
-(modality dropout, áp sau LN);
-:g_k = sigmoid(w · [h'_k ‖ a'_k] + b)
-Linear(2D → 1), (B, 30, 1);
-:z_k = g_k · h'_k + (1 − g_k) · a'_k
+:train: với mỗi mẫu, h = 0 với xác suất 0.5
+(modality dropout, cả 30 khoảnh khắc của mẫu);
+:ghép [h_k ‖ a_k]
+(B, 30, 2D);
+:z_k = Linear(2D → D)
 (B, 30, D);
 stop
 @enduml
 ```
 
 Ghi chú:
-- **Diễn giải:** `g_k` là tỉ trọng của nhánh hình dạng ở khoảnh khắc k, còn `1 − g_k` là tỉ trọng của nhánh tốc độ. Hai nhánh đã qua LayerNorm không affine nên có cùng thang đo, vì vậy `g_k` đọc trực tiếp được như một tỉ lệ.
-- **Modality dropout:** nhánh hình dạng lớn hơn nhánh tốc độ rất nhiều, khoảng 140K so với 2K tham số. Nếu không dropout, Khối 3 có thể chỉ dựa vào nhánh hình dạng. Khi train, toàn bộ `h` của một mẫu bị zero với xác suất 0.5, buộc Khối 3 phải đọc được cả nhánh tốc độ. Lúc test không dùng dropout.
-- **So với gộp tuyến tính:** gộp tuyến tính `Linear(2D → D)([h ‖ a])` có 8,256 tham số và trộn từng chiều riêng. Gate chỉ có 129 tham số, nhưng không giải thích được bằng một con số cho mỗi khoảnh khắc.
+- **Trộn theo từng chiều:** `Linear(2D → D)` có 8,256 tham số. Mỗi chiều của `z_k` là một tổ hợp riêng của các chiều `h_k` và `a_k`, nên hai nhánh có thể bổ sung cho nhau ở những chiều khác nhau. Gộp bằng cổng chỉ trộn bằng một hệ số chung cho cả vector, và trên thực tế đã sập về nhánh tốc độ (mục 4).
+- **Modality dropout:** nhánh hình dạng lớn hơn nhánh tốc độ rất nhiều, khoảng 140K so với 2K tham số. Nếu không dropout, Khối 3 có thể chỉ dựa vào nhánh hình dạng. Khi train, toàn bộ `h` của một mẫu bị zero với xác suất 0.5, buộc Khối 3 phải đọc được cả nhánh tốc độ. Lúc test không dùng dropout. Knock-out sau khi train cho thấy hai nhánh đều được dùng: bỏ nhánh hình dạng còn 88–94 %, bỏ nhánh tốc độ còn 32–80 %, có cả hai thì 93–97 % (accuracy 7 lớp).
+- **Chuẩn trọng số:** `view_contribution.json` ghi chuẩn của nửa trọng số `fuse` cho từng nhánh. Trên 5 fold, nhánh hình dạng khoảng 5.8, nhánh tốc độ khoảng 9.0.
 
 ### Hình 4 — Khối 2: attention RX × subcarrier trong từng window
 
@@ -219,11 +217,18 @@ Số liệu cho SSHAR-ESP, 7 lớp, một mẫu, inference. MACs đo bằng `tho
 
 | Biến thể | Params | MACs |
 |---|---|---|
-| `gate` (kiến trúc chính, tạm thời) | 445,136 | ≈ 2.378 G |
-| `full` (gộp tuyến tính) | 453,263 | 2.378 G |
+| `full` | 453,263 | 2.378 G |
+| `gate` | 445,136 | ≈ 2.378 G |
+| `wo_mdrop` | 453,263 | 2.378 G |
 | `wo_shape` | 307,071 | ≈ 0.04 G |
+| `wo_speed` | 447,055 | |
+| `shape_mean` | 352,991 | |
+| `wo_order` | 153,047 | |
+| `sym_bias` | 453,147 | |
+| `no_overlap` | 453,143 | |
+| `no_win` | 482,983 | |
 
-Dòng `gate` lấy MACs của `full`, vì hai bản chỉ khác nhau ở lớp gộp và lớp này chưa tới 0.3 M MACs. Gần như toàn bộ MACs nằm ở Conv của nhánh hình dạng. Khối 3 có khoảng 300K tham số và là phần lớn nhất về số tham số.
+Số tham số là số đếm thật. Ô MACs có dấu ≈ là ước tính, ô trống là chưa đo. Gần như toàn bộ MACs nằm ở Conv của nhánh hình dạng. Khối 3 có khoảng 300K tham số và là phần lớn nhất về số tham số. `no_win` nhiều tham số hơn vì nhánh tốc độ có 500 bin phổ thay vì 32.
 
 ## 3. Phân tích sau khi train
 
@@ -231,10 +236,10 @@ Dòng `gate` lấy MACs của `full`, vì hai bản chỉ khác nhau ở lớp g
 
 | File | Nội dung |
 |---|---|
-| `gate.json` | `g_k` trên tập test, giữ cả hai nhánh: trung bình chung, trung bình theo lớp, và theo lớp × khoảnh khắc (đường cong 30 điểm) |
-| `view_contribution.json` | Test acc và recall theo lớp khi zero một nhánh lúc test (knock-out): cả hai, chỉ tốc độ, chỉ hình dạng. Với gộp tuyến tính, file có thêm chuẩn trọng số `fuse` của từng nửa |
-| `block2_bias.json` | `b_sub[h][\|Δs\|]`, `c_cross[h]`, bias CLS |
-| `block3_bias.json` | `b[h][i − j]` theo offset, bias CLS |
+| `view_contribution.json` | Chuẩn trọng số `fuse` của từng nửa (hình dạng / tốc độ). Test acc và recall theo lớp khi zero một nhánh lúc test (knock-out): cả hai, chỉ tốc độ, chỉ hình dạng |
+| `gate.json` | Chỉ có ở `gate`: `g_k` trên tập test, trung bình chung, theo lớp, và theo lớp × khoảnh khắc |
+| `block2_bias.json` | `b_sub[h][\|Δs\|]`, `c_cross[h]`, bias CLS. Không có ở `shape_mean`, `wo_shape` |
+| `block3_bias.json` | `b[h][i − j]` theo offset (`sym_bias`: theo `\|i − j\|`), bias CLS. Không có ở `wo_order` |
 | `rx_permutation.json` | Tỉ lệ dự đoán giữ nguyên khi hoán vị vòng các RX (phải bằng 1) |
 
 Knock-out cho biết mô hình đã dựa vào nhánh nào. Nhờ có modality dropout, mô hình đã quen với việc thiếu `h` nên knock-out nhánh hình dạng có ý nghĩa. Câu hỏi "nhánh tốc độ tự nó đạt bao nhiêu" do ablation `wo_shape` trả lời.
@@ -243,23 +248,30 @@ Tổng hợp 5 fold dùng `summarize_folds.py`. Script ghi bảng mean ± std, M
 
 ## 4. Ablation
 
-| Biến thể | Ý nghĩa | Trạng thái |
-|---|---|---|
-| `gate` | Kiến trúc chính (tạm thời) | Đang chạy 5 fold |
-| `full` | Gộp tuyến tính `Linear(2D → D)([h ‖ a])` thay cho gate | Đang chạy 5 fold |
-| `wo_shape` | Chỉ nhánh tốc độ, `z_k = Linear(D → D)(a_k)` → Khối 3 | Đang chạy 5 fold |
+Mỗi biến thể chỉ đổi một điểm so với `full`. Mỗi session chạy trên 5 account Kaggle, mỗi account một fold.
 
-Các ablation tiếp theo dùng cơ chế gộp đã chốt, và **chưa có code**:
+| Session | Biến thể | Đổi gì so với `full` | Câu hỏi | Cờ |
+|---|---|---|---|---|
+| A | `gate` | Cổng vô hướng thay cho gộp tuyến tính | Cách gộp nào tốt hơn? | `--fusion=gate` |
+| A | `wo_shape` | Chỉ nhánh tốc độ, `z_k = Linear(D → D)(a_k)` | Nhánh hình dạng có cần không? | `--v5_ablation=wo_shape` |
+| B | `wo_mdrop` | Không modality dropout | Dropout có cần để dùng cả hai nhánh không? | `--mod_drop=0` |
+| B | `wo_speed` | Chỉ nhánh hình dạng, `z_k = Linear(D → D)(h_k)` | Nhánh tốc độ có cần không? | `--v5_ablation=wo_speed` |
+| B | `shape_mean` | Khối 2 = trung bình 168 token | Gộp có chọn lọc qua attention có hơn trung bình không? | `--v5_ablation=shape_mean` |
+| C | `wo_order` | Khối 3 = trung bình các khoảnh khắc | Thứ tự các khoảnh khắc có cần không? | `--v5_ablation=wo_order` |
+| C | `sym_bias` | Bias Khối 3 đối xứng `b[\|i − j\|]` | Phân biệt trước / sau có cần không? | `--k3_bias=sym` |
+| C | `no_overlap` | stride = W = 64, K = 15 | Overlap 50 % có cần không? | `--stride=64` |
+| C | `no_win` | W = T = 1000, K = 1 | Chia thành khoảnh khắc có cần không? | `--window=1000` |
 
-| Biến thể | Ý nghĩa |
-|---|---|
-| `wo_mdrop` | Bỏ modality dropout |
-| `wo_speed` | Chỉ nhánh hình dạng |
-| `shape_mean` | Khối 2 thay bằng trung bình 168 token |
-| `wo_order` | Khối 3 thay bằng trung bình các khoảnh khắc |
-| `sym_bias` | Bias Khối 3 đối xứng `b[\|i − j\|]` |
-| `no_overlap` | stride = W (`--stride=64`) |
-| `no_win` | Không chia window, cả chuỗi là một khoảnh khắc |
+**Kết quả session A** (5 fold, accuracy 6 hành động, McNemar gộp so với `full`):
+
+| Biến thể | Mean ± std | Lỗi hành động | p |
+|---|---|---|---|
+| `full` | **92.90 ± 1.78** | 341 | |
+| `gate` | 90.25 ± 2.07 | 468 | < 1e-4 |
+| `wo_shape` | 88.98 ± 3.48 | 529 | < 1e-4 |
+
+- **Gate sập về nhánh tốc độ.** g trung bình chỉ 0.068, tức khoảng 93 % đầu ra lấy từ nhánh tốc độ, ở mọi lớp. Knock-out nhánh hình dạng gần như không đổi kết quả. Nguyên nhân có thể: modality dropout làm `h' = 0` ở một nửa số mẫu train nên cổng có lợi khi giữ g nhỏ, và khi g nhỏ thì gradient về nhánh hình dạng cũng nhỏ, tạo thành vòng tự củng cố.
+- **Nhánh hình dạng giúp đúng ở các cặp lớp cần thông tin hình dạng hoặc thứ tự.** So với `wo_shape`, `full` giảm lỗi ngồi ↔ đứng từ 105 xuống 55 và đi ↔ chạy từ 253 xuống 180. Đi ↔ chạy vẫn là nhóm lỗi lớn nhất, chiếm 53 % lỗi của `full`.
 
 Có hai thiết kế đã loại và không đưa vào ablation:
 - Cửa sổ chữ nhật trước FFT: kém hơn Hann.
@@ -283,7 +295,7 @@ Có hai thiết kế đã loại và không đưa vào ablation:
 
 Chạy:
 ```
-python ablation.py --model=wiformer_v5 --data_root=<thư mục chỉ chứa room_02> --dataset=sshar_esp --split_mode=user --case_split=<fold> --variants gate full wo_shape
-python summarize_folds.py --root results/v5 --variants full gate wo_shape
+python ablation.py --model=wiformer_v5 --data_root=<thư mục chỉ chứa room_02> --dataset=sshar_esp --split_mode=user --case_split=<fold> --variants wo_mdrop wo_speed shape_mean
+python summarize_folds.py --root results/v5 --variants full gate wo_shape wo_mdrop wo_speed shape_mean
 ```
 Hướng dẫn chạy trên Kaggle: [kaggle_cells.txt](kaggle_cells.txt), với `MODEL = 'wiformer_v5'`.

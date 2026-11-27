@@ -353,8 +353,14 @@ def parse_args():
                         help="Training-only probability of zeroing the Block 2 branch h_k (per sample), "
                              "so the averaged-spectrum branch is also used. "
                              "Default: 0 for wiformer_v4 (ablation hybrid only), 0.5 for wiformer_v5")
-    parser.add_argument("--v5_ablation", type=str, default="full", choices=["full", "wo_shape"],
-                        help="WiFormer v5 ablation (wo_shape = speed branch only)")
+    parser.add_argument("--v5_ablation", type=str, default="full",
+                        choices=["full", "wo_shape", "wo_speed", "shape_mean", "wo_order"],
+                        help="WiFormer v5 ablation: wo_shape / wo_speed = one branch only; "
+                             "shape_mean = Block 2 replaced by the mean over Rx x Sub; "
+                             "wo_order = Block 3 replaced by the mean over the moments")
+    parser.add_argument("--k3_bias", type=str, default="signed", choices=["signed", "sym"],
+                        help="WiFormer v5 Block 3 relative bias: signed b[i - j] (default) or "
+                             "symmetric b[|i - j|] (ablation, no before / after)")
     parser.add_argument("--spec_win", type=str, default="hann", choices=["hann", "rect"],
                         help="WiFormer v5 speed branch: window before the FFT (hann = per-window mean "
                              "removed + Hann scaled to mean 1, default; rect = no window, ablation)")
@@ -607,6 +613,7 @@ def main():
             mod_drop=0.5 if args.mod_drop is None else args.mod_drop,
             spec_win=args.spec_win,
             fusion=args.fusion,
+            k3_bias=args.k3_bias,
             window_sec=args.window_sec,
             fs=args.fs,
             window=args.window,

@@ -38,9 +38,18 @@ fusion     : linear (default): z_k = Linear(2D, D)([h_k || a_k])
 Block 3    : temporal Transformer, signed relative bias b[i - j], CLS
 classifier : LayerNorm -> Dropout -> Linear                           (B, C);  loss = CE
 
-Ablations: wo_shape = speed branch only, z_k = Linear(D, D)(a_k) -> Block 3
-           fusion="gate" = scalar gate per moment instead of the linear fusion
-           (spec_win="rect" = no window before the FFT, = v4 hybrid_drop; kept as an option only).
+Main design = ablation "full" with fusion="linear" (5-fold cross-user: linear 92.90 vs gate 90.25,
+6-action accuracy; the gate collapses onto the speed branch, mean g = 0.07).
+
+Ablations (everything else as full):
+  wo_shape   : speed branch only, z_k = Linear(D, D)(a_k) -> Block 3
+  wo_speed   : shape branch only, z_k = Linear(D, D)(h_k) -> Block 3 (no mod_drop)
+  shape_mean : Block 2 replaced by the mean of the R*S tokens of the window
+  wo_order   : Block 3 replaced by the mean over the moments
+  fusion="gate"   : scalar gate per moment instead of the linear fusion
+  k3_bias="sym"   : symmetric Block 3 bias b[|i - j|] (no before / after)
+  mod_drop=0, stride=W (no overlap), window=T (one moment): through the CLI
+  (spec_win="rect" = no window before the FFT, = v4 hybrid_drop; kept as an option only).
 """
 
 import json
@@ -54,9 +63,11 @@ from .base import BaseModel
 from .wiformer import WIFORMER_DATASET_CFG
 from .wiformer_v4 import DATASET_FS, ConvExtractor, RxSubAttention, TemporalTransformer
 
-ABLATIONS = ("full", "wo_shape")
+ABLATIONS = ("full", "wo_shape", "wo_speed", "shape_mean", "wo_order")
 SPEC_WINDOWS = ("rect", "hann")
 FUSIONS = ("linear", "gate")
+K3_BIASES = ("signed", "sym")
+SINGLE_BRANCH = ("wo_shape", "wo_speed")
 
 
 class SpeedBranch(nn.Module):
@@ -172,6 +183,7 @@ class WiFormerV5(BaseModel):
         mod_drop=0.5,
         spec_win="hann",
         fusion="linear",
+        k3_bias="signed",
         **kwargs,
     ):
         super().__init__(input_shape=input_shape, num_classes=num_classes)
@@ -183,11 +195,17 @@ class WiFormerV5(BaseModel):
             raise ValueError(f"WiFormerV5: spec_win must be one of {SPEC_WINDOWS}, got '{spec_win}'")
         if fusion not in FUSIONS:
             raise ValueError(f"WiFormerV5: fusion must be one of {FUSIONS}, got '{fusion}'")
-        if ablation == "wo_shape" and fusion != "linear":
-            raise ValueError("WiFormerV5: wo_shape has a single branch, fusion must be 'linear'")
+        if k3_bias not in K3_BIASES:
+            raise ValueError(f"WiFormerV5: k3_bias must be one of {K3_BIASES}, got '{k3_bias}'")
+        if ablation in SINGLE_BRANCH and fusion != "linear":
+            raise ValueError(f"WiFormerV5: {ablation} has a single branch, fusion must be 'linear'")
+        if ablation == "wo_order" and k3_bias != "signed":
+            raise ValueError("WiFormerV5: wo_order has no Block 3 bias, k3_bias must be 'signed'")
         self.ablation, self.norm, self.fusion_type = ablation, norm, fusion
-        if ablation == "wo_shape":
-            mod_drop = 0.0                                                # no shape branch to drop
+        if ablation in SINGLE_BRANCH:
+            mod_drop = 0.0                                                # one branch: nothing to drop
+        if ablation == "wo_order":
+            k3_layers = 0                                                 # Block 3 = mean over moments
 
         name = (dataset or "").lower()
         cfg = dict(WIFORMER_DATASET_CFG.get(name, {}))
@@ -213,7 +231,8 @@ class WiFormerV5(BaseModel):
         self.n_win = (T - window) // stride + 1
         dur = f"{window / self.fs:.3f} s" if self.fs else "fs unknown"
         print(f"[WiFormerV5] window W={window} ({dur}), stride={stride}, n_win={self.n_win}, "
-              f"norm={norm}, mod_drop={mod_drop}, spec_win={spec_win}, fusion={fusion}, ablation={ablation}")
+              f"norm={norm}, mod_drop={mod_drop}, spec_win={spec_win}, fusion={fusion}, k3_bias={k3_bias}, "
+              f"ablation={ablation}")
 
         k2_ff = k2_ff or 4 * d_model
         k3_ff = k3_ff or 4 * d_model
@@ -224,17 +243,18 @@ class WiFormerV5(BaseModel):
             self.conv = ConvExtractor(d_model, feat, window, k1_conv, k1_pool)
             self.token = nn.Linear(d_model, d_model)
             self.block2 = RxSubAttention(R, S, d_model, k2_heads, k2_layers, k2_ff, dropout,
-                                         activation, norm_first)
-        # speed: spectrum averaged over all channels
-        self.speed = SpeedBranch(window, d_model, spec_win)
-        # wo_shape (speed only): z_k = Linear(D, D)(a_k)  (same function class as v4 freq_mean)
-        if ablation == "wo_shape":
+                                         activation, norm_first, pool=ablation == "shape_mean")
+        if ablation != "wo_speed":
+            # speed: spectrum averaged over all channels
+            self.speed = SpeedBranch(window, d_model, spec_win)
+        # one branch (wo_shape: a_k, wo_speed: h_k): z_k = Linear(D, D)(branch)
+        if ablation in SINGLE_BRANCH:
             self.fusion = nn.Linear(d_model, d_model)
         else:
             self.fusion = (GateFusion if fusion == "gate" else MomentFusion)(d_model, mod_drop)
-        # order: temporal Transformer over the moments
+        # order: temporal Transformer over the moments (wo_order: k3_layers = 0 -> mean)
         self.block3 = TemporalTransformer(self.n_win, d_model, k3_heads, k3_layers, k3_ff, dropout,
-                                          activation, norm_first)
+                                          activation, norm_first, sym=k3_bias == "sym")
         self.classifier = nn.Sequential(nn.LayerNorm(d_model), nn.Dropout(dropout),
                                         nn.Linear(d_model, num_classes))
         self._init_weights()
@@ -250,7 +270,7 @@ class WiFormerV5(BaseModel):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
         for blk in (getattr(self, "block2", None), self.block3):
-            if blk is not None:
+            if hasattr(blk, "cls_token"):                                 # not pooled (shape_mean / wo_order)
                 nn.init.trunc_normal_(blk.cls_token, std=0.02)
 
     def preprocess(self, x):
@@ -271,6 +291,8 @@ class WiFormerV5(BaseModel):
             return self.classifier(self.block3(self.fusion(self.speed(seg))))
         v = self.token(self.conv(seg.permute(0, 1, 3, 2, 4).reshape(-1, self.window)))
         h = self.block2(v.reshape(B, R, K, S, -1))                        # shape  (B, K, D)
+        if self.ablation == "wo_speed":
+            return self.classifier(self.block3(self.fusion(h)))
         a = self.speed(seg)                                               # speed  (B, K, D)
         return self.classifier(self.block3(self.fusion(h, a)))
 
@@ -290,11 +312,13 @@ class WiFormerV5(BaseModel):
         R = self.n_rx
         perm = list(range(1, R)) + [0]
         b3 = self.block3
-        with open(os.path.join(save_dir, "block3_bias.json"), "w", encoding="utf-8") as fh:
-            json.dump({"offsets(i-j)": list(range(-(self.n_win - 1), self.n_win)),
-                       "rel_bias[h][offset]": b3.rel_bias.tolist(),
-                       "cls_bias[h][cls->win, win->cls, cls->cls]": b3.cls_bias.tolist()}, fh, indent=2)
-        if self.ablation == "wo_shape":
+        if b3.n_layers > 0:                                               # wo_order: no Block 3 bias
+            offsets = list(range(self.n_win)) if b3.sym else list(range(-(self.n_win - 1), self.n_win))
+            with open(os.path.join(save_dir, "block3_bias.json"), "w", encoding="utf-8") as fh:
+                json.dump({"offsets(|i-j|)" if b3.sym else "offsets(i-j)": offsets,
+                           "rel_bias[h][offset]": b3.rel_bias.tolist(),
+                           "cls_bias[h][cls->win, win->cls, cls->cls]": b3.cls_bias.tolist()}, fh, indent=2)
+        if self.ablation in SINGLE_BRANCH:
             return                                                        # one branch: no knock-out
         fu = self.fusion
         gated = isinstance(fu, GateFusion)
@@ -357,10 +381,11 @@ class WiFormerV5(BaseModel):
             json.dump({"perm": perm, "n": n, "agreement": agree / max(n, 1), "max_abs_logit_diff": max_diff},
                       fh, indent=4)
         b2 = self.block2
-        with open(os.path.join(save_dir, "block2_bias.json"), "w", encoding="utf-8") as fh:
-            json.dump({"sub_bias[h][|ds|]": b2.sub_bias.tolist(),
-                       "cross_bias[h]": b2.cross_bias.tolist(),
-                       "cls_bias[h][cls->tok, tok->cls, cls->cls]": b2.cls_bias.tolist()}, fh, indent=2)
+        if not b2.pool:                                                   # shape_mean: no Block 2 bias
+            with open(os.path.join(save_dir, "block2_bias.json"), "w", encoding="utf-8") as fh:
+                json.dump({"sub_bias[h][|ds|]": b2.sub_bias.tolist(),
+                           "cross_bias[h]": b2.cross_bias.tolist(),
+                           "cls_bias[h][cls->tok, tok->cls, cls->cls]": b2.cls_bias.tolist()}, fh, indent=2)
         if g_mean is not None:
             print("[WiFormerV5] gate: mean share of the shape branch g = {:.3f}".format(g_mean))
         print("[WiFormerV5] test acc both {:.4f} | speed only {:.4f} | shape only {:.4f} | "

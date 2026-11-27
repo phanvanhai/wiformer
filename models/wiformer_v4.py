@@ -236,25 +236,28 @@ class TemporalTransformer(nn.Module):
     Window tokens + CLS. Bias (shared by all layers):
         two windows : b[h, i - j], i - j in {-(K-1), ..., K-1}  (signed, T5 / Swin style)
         CLS         : 3 values / head (untied from position)
+    sym=True (ablation): symmetric bias b[h, |i - j|] (K values / head), no before / after.
     n_layers = 0 (ablation wo_block3): mean over the windows.
     """
 
     def __init__(self, n_win, d_model, n_heads, n_layers, dim_ff, dropout,
-                 activation="gelu", norm_first=True):
+                 activation="gelu", norm_first=True, sym=False):
         super().__init__()
         self.n_layers = n_layers
+        self.sym = sym
         if n_layers == 0:
             return
         self.n_heads = n_heads
         self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
-        self.rel_bias = nn.Parameter(torch.zeros(n_heads, 2 * n_win - 1))
+        self.rel_bias = nn.Parameter(torch.zeros(n_heads, n_win if sym else 2 * n_win - 1))
         self.cls_bias = nn.Parameter(torch.zeros(n_heads, 3))
         self.layers = nn.ModuleList([
             BiasEncoderLayer(d_model, n_heads, dim_ff, dropout, activation, norm_first)
             for _ in range(n_layers)
         ])
         pos = torch.arange(n_win)
-        self.register_buffer("rel_idx", pos[:, None] - pos[None, :] + n_win - 1, persistent=False)
+        rel = pos[:, None] - pos[None, :]
+        self.register_buffer("rel_idx", rel.abs() if sym else rel + n_win - 1, persistent=False)
 
     def bias(self):
         return _with_cls_bias(self.rel_bias[:, self.rel_idx], self.cls_bias)
