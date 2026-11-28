@@ -1,6 +1,6 @@
 # WiFormer v5: nhận dạng hoạt động bằng CSI WiFi như một chuỗi khoảnh khắc, mỗi khoảnh khắc có hình dạng và tốc độ
 
-*Bản thảo nội bộ, cập nhật 2026-11-28. Dữ liệu: SSHAR-ESP (room_02), đánh giá chéo người (cross-user) 5 fold, mỗi cấu hình 1 seed. Một số ablation mới có 2–3/5 fold. Các ô "(bổ sung)" sẽ điền khi có kết quả.*
+*Bản thảo nội bộ, cập nhật 2026-11-28. Dữ liệu: SSHAR-ESP (room_02), đánh giá chéo người (cross-user) 5 fold, mỗi cấu hình 1 seed. Mọi ablation đã đủ 5 fold. Các ô "(bổ sung)" sẽ điền khi có kết quả.*
 
 ---
 
@@ -20,9 +20,9 @@ Trên SSHAR-ESP (10 người, 3 RX ESP32, 7 lớp), với đánh giá chéo ngư
 
 Mô hình có 453K tham số và khoảng 2.4 GMACs mỗi mẫu.
 
-**Ablation:** mọi thành phần đều có đóng góp có ý nghĩa thống kê (McNemar gộp, p < 0.004).
+**Ablation:** mọi thành phần đều có đóng góp có ý nghĩa thống kê (McNemar gộp 5 fold, p < 1e-4).
 - Thứ tự giữa các khoảnh khắc và việc chia chuỗi thành khoảnh khắc quan trọng nhất: bỏ đi thì mất 6–8 điểm.
-- Các thành phần còn lại đóng góp 1.4–3.9 điểm.
+- Các thành phần còn lại đóng góp 1.7–3.9 điểm.
 - Mỗi thành phần sửa đúng nhóm lỗi mà nó được thiết kế để sửa, và hầu hết lợi ích nằm ở các hành động tại chỗ có cùng tư thế (ngồi / đứng / ngã).
 
 **Phân tích lỗi:** khoảng một nửa lỗi còn lại là "chạy → đi" của ba người. Phổ tốc độ cho thấy những người này chạy gần như với tốc độ đi bộ, nên đây là giới hạn của dữ liệu và của việc tổng quát hóa sang người mới, không phải của kiến trúc.
@@ -265,60 +265,57 @@ Protocol cho các baseline đã được viết trong `amsc-tcn/code/docs/SSHAR_
 
 ### 5.2 Ablation
 
-Do quota GPU, các ablation hoàn thành theo đợt. Mỗi bảng chỉ so trên **các fold mà mọi biến thể trong bảng đều có**. Quy ước chung cho các bảng:
-- Δ: chênh lệch accuracy 6 hành động so với `full` trên cùng các fold.
+Mọi biến thể đều có đủ 5 fold (4800 mẫu hành động). Quy ước cho các bảng:
+- Δ: chênh lệch accuracy 6 hành động so với `full`.
 - Lỗi tại chỗ / lỗi di chuyển: số mẫu hành động bị đoán nhầm sang lớp khác **trong cùng nhóm** (ngồi / đứng / cúi / ngã, và đi / chạy).
 - "full đúng / B đúng": số mẫu chỉ `full` đúng và số mẫu chỉ biến thể B đúng.
-- p: McNemar gộp so với `full`.
+- p: McNemar gộp 5 fold so với `full`.
 
-**Bảng 1. Đủ 5 fold (4800 mẫu hành động).**
+**Bảng 1. Ablation, 5 fold (xếp theo Δ).**
 
 | Biến thể | F0 | F1 | F2 | F3 | F4 | 6 hành động | Macro-F1 | Δ | Lỗi tại chỗ | Lỗi di chuyển | full đúng / B đúng | p |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | **full** | 91.67 | 91.15 | 92.81 | 93.12 | 95.73 | **92.90 ± 1.78** | **93.81** | | **134** | 180 | | |
+| no_overlap | 86.77 | 89.90 | 91.98 | 92.40 | 94.79 | 91.17 ± 3.01 | 92.34 | −1.73 | 212 | 206 | 197 / 114 | < 1e-4 |
+| wo_speed | 85.62 | 89.48 | 92.92 | 93.54 | 93.65 | 91.04 ± 3.48 | 92.29 | −1.85 | 187 | 235 | 222 / 133 | < 1e-4 |
+| wo_mdrop | 87.92 | 88.33 | 92.19 | 92.40 | 93.85 | 90.94 ± 2.65 | 92.19 | −1.96 | 233 | 198 | 221 / 127 | < 1e-4 |
 | sym_bias | 86.15 | 90.83 | 92.29 | 92.60 | 91.77 | 90.73 ± 2.65 | 91.93 | −2.17 | 239 | 172 | 206 / 102 | < 1e-4 |
 | gate | 87.19 | 92.19 | 92.08 | 90.31 | 89.48 | 90.25 ± 2.07 | 91.55 | −2.65 | 265 | 200 | 250 / 123 | < 1e-4 |
+| shape_mean | 84.58 | 91.25 | 91.56 | 87.29 | 93.12 | 89.56 ± 3.52 | 90.96 | −3.33 | 275 | 205 | 267 / 107 | < 1e-4 |
 | wo_shape | 84.38 | 90.73 | 89.90 | 86.67 | 93.23 | 88.98 ± 3.48 | 90.43 | −3.92 | 267 | 253 | 292 / 104 | < 1e-4 |
 | no_win | 86.46 | 83.23 | 86.88 | 90.94 | 85.94 | 86.69 ± 2.77 | 88.54 | −6.21 | 445 | 187 | 458 / 160 | < 1e-4 |
 | wo_order | 85.42 | 81.88 | 85.62 | 87.40 | 84.79 | 85.02 ± 2.01 | 86.93 | −7.88 | 499 | 210 | 486 / 108 | < 1e-4 |
 
-**Bảng 2. Fold 0–2 (2880 mẫu hành động).**
+**Bảng 2. Lỗi theo cặp lớp, cộng 5 fold.**
 
-| Biến thể | F0 | F1 | F2 | 6 hành động | Macro-F1 | Δ | Lỗi tại chỗ | Lỗi di chuyển | p |
-|---|---|---|---|---|---|---|---|---|---|
-| **full** | 91.67 | 91.15 | 92.81 | **91.88** | **92.92** | | **76** | 158 | |
-| gate | 87.19 | 92.19 | 92.08 | 90.49 | 91.73 | −1.39 | 123 | 151 | 0.004 |
-| sym_bias | 86.15 | 90.83 | 92.29 | 89.76 | 91.08 | −2.12 | 141 | 149 | < 1e-4 |
-| no_overlap | 86.77 | 89.90 | 91.98 | 89.55 | 90.87 | −2.33 | 135 | 166 | < 1e-4 |
-| wo_speed | 85.62 | 89.48 | 92.92 | 89.34 | 90.79 | −2.53 | 136 | 166 | < 1e-4 |
-| shape_mean | 84.58 | 91.25 | 91.56 | 89.13 | 90.61 | −2.74 | 146 | 160 | < 1e-4 |
-| wo_shape | 84.38 | 90.73 | 89.90 | 88.33 | 89.75 | −3.54 | 144 | 189 | < 1e-4 |
-| no_win | 86.46 | 83.23 | 86.88 | 85.52 | 87.51 | −6.35 | 240 | 176 | < 1e-4 |
-| wo_order | 85.42 | 81.88 | 85.62 | 84.31 | 86.25 | −7.57 | 275 | 175 | < 1e-4 |
-
-**Bảng 3. Fold 0–1, đủ 10 biến thể (1920 mẫu hành động).**
-
-| Biến thể | 6 hành động | Macro-F1 | Δ | Lỗi tại chỗ | Lỗi di chuyển | full đúng / B đúng | p |
-|---|---|---|---|---|---|---|---|
-| **full** | **91.41** | **92.53** | | **62** | 103 | | |
-| gate | 89.69 | 91.04 | −1.72 | 92 | 106 | 76 / 43 | 0.003 |
-| sym_bias | 88.49 | 89.94 | −2.92 | 117 | 100 | 98 / 42 | < 1e-4 |
-| no_overlap | 88.33 | 89.84 | −3.07 | 110 | 114 | 89 / 30 | < 1e-4 |
-| wo_mdrop | 88.12 | 89.79 | −3.28 | 117 | 109 | 100 / 37 | < 1e-4 |
-| shape_mean | 87.92 | 89.61 | −3.49 | 112 | 115 | 94 / 27 | < 1e-4 |
-| wo_shape | 87.55 | 89.15 | −3.85 | 120 | 116 | 112 / 38 | < 1e-4 |
-| wo_speed | 87.55 | 89.23 | −3.85 | 118 | 117 | 104 / 30 | < 1e-4 |
-| no_win | 84.84 | 86.88 | −6.56 | 163 | 127 | 165 / 39 | < 1e-4 |
-| wo_order | 83.65 | 85.68 | −7.76 | 197 | 116 | 186 / 37 | < 1e-4 |
+| Biến thể | ngồi ↔ đứng | ngã ↔ ngồi | đi ↔ chạy | cúi ↔ đứng | Tổng lỗi hành động |
+|---|---|---|---|---|---|
+| **full** | **55** | **37** | 180 | **28** | **341** |
+| no_overlap | 109 | 50 | 206 | 42 | 424 |
+| wo_speed | 86 | 59 | 235 | 29 | 430 |
+| wo_mdrop | 94 | 81 | 198 | 44 | 435 |
+| sym_bias | 95 | 81 | **172** | 44 | 445 |
+| gate | 81 | 75 | 200 | 78 | 468 |
+| shape_mean | 85 | 115 | 205 | 59 | 501 |
+| wo_shape | 105 | 72 | 253 | 54 | 529 |
+| no_win | 258 | 102 | 187 | 75 | 639 |
+| wo_order | 291 | 91 | 210 | 86 | 719 |
 
 **Nhận xét:**
 
-1. **Mọi thành phần đều có đóng góp có ý nghĩa thống kê.** Mọi biến thể đều kém `full` với p ≤ 0.004 trên mọi tập fold có sẵn.
+1. **Mọi thành phần đều có đóng góp có ý nghĩa thống kê.** Mọi biến thể đều kém `full` với p < 1e-4 (McNemar gộp 5 fold).
 2. **Có hai mức ảnh hưởng tách bạch.**
    - Cấu trúc thời gian quan trọng nhất: `wo_order` mất 7.9 điểm, `no_win` mất 6.2 điểm. Lỗi tại chỗ tăng 3.7 và 3.3 lần.
-   - Các thành phần còn lại (cách gộp, hướng thời gian, hai nhánh, Khối 2, overlap, dropout) mỗi thành phần đóng góp 1.4–3.9 điểm.
-3. **Lợi ích nằm ở các hành động tại chỗ.** Lỗi tại chỗ của `full` thấp nhất ở mọi bảng, và mọi ablation làm nó tăng 1.5–3.7 lần. Ngược lại, lỗi di chuyển (đi ↔ chạy) gần như không đổi, khoảng 150–210 trên 5 fold. Ngoại lệ duy nhất là `wo_shape` với 253 lỗi. Mục 5.7 giải thích hiện tượng này.
-4. **Mức chênh co lại khi thêm fold** đối với `wo_speed` và `shape_mean`: khoảng −3.5…−3.9 ở fold 0–1, còn −2.5…−2.7 ở fold 0–2. Độ lớn cuối cùng của hai mức chênh này cần đủ 5 fold. Mức chênh của `sym_bias` ổn định quanh −2.2 điểm.
+   - Các thành phần còn lại (overlap, hai nhánh, dropout, hướng thời gian, cách gộp, Khối 2) mỗi thành phần đóng góp 1.7–3.9 điểm.
+3. **Lợi ích nằm ở các hành động tại chỗ.** Lỗi tại chỗ của `full` thấp nhất, và mọi ablation làm nó tăng 1.4–3.7 lần. Ngược lại, lỗi di chuyển (đi ↔ chạy) chỉ dao động trong khoảng 172–253. Mục 5.7 giải thích hiện tượng này.
+4. **Mỗi thành phần sửa một nhóm lỗi riêng** (Bảng 2):
+   - **thứ tự và chia khoảnh khắc** cho ngồi ↔ đứng: `wo_order` có 291 lỗi, `no_win` 258, so với 55 của `full`;
+   - **Khối 2** cho ngã ↔ ngồi: `shape_mean` có 115 lỗi so với 37, cao nhất trong mọi biến thể. Gộp có chọn lọc qua các kênh giúp nhận ra kiểu chuyển động đột ngột của ngã;
+   - **nhánh tốc độ** cho đi ↔ chạy: `wo_speed` giữ lỗi tại chỗ khá thấp (187) nhưng lỗi đi ↔ chạy tăng lên 235;
+   - **nhánh hình dạng** là nền tảng chung: `wo_shape` kém ở cả hai nhóm (267 và 253).
+5. **Modality dropout và bias có dấu có mức ảnh hưởng gần nhau** (−1.96 và −2.17), và lợi ích của cả hai đều nằm ở nhóm tại chỗ. Riêng `sym_bias` có ít lỗi đi ↔ chạy nhất (172): hướng thời gian không giúp gì cho cặp này.
+6. **Overlap 50 % có đóng góp nhỏ nhất** (−1.73) nhưng vẫn có ý nghĩa thống kê. Bỏ overlap làm lỗi ngồi ↔ đứng tăng gấp đôi (109 so với 55).
+7. **Fold 0 (người 13, 14) khó nhất với hầu hết các ablation:** 84.4–87.9 %, trong khi `full` đạt 91.67 %.
 
 ### 5.3 Phân tích theo nhóm hành động
 
@@ -351,15 +348,19 @@ Vì vậy bài toán thực chất là phân biệt **bên trong** nhóm tại c
   - Ngồi ↔ ngã có 37 lỗi, rơi vào những người khác nhau tùy theo chiều.
 - **Cúi nhặt gần như hoàn hảo** (98.6 %), dù cũng là động tác lên xuống.
 
-**Mỗi ablation để lại "dấu vết" riêng**, so trên cùng fold với `full`:
+**Mỗi ablation để lại "dấu vết" riêng** (cộng 5 fold, so với `full`):
 
 | Biến thể | Lỗi tăng rõ nhất | Diễn giải |
 |---|---|---|
-| `wo_order` | ngồi ↔ đứng: 235 so với 51 (f0–3) | Mất thứ tự thì không phân biệt được hai động tác ngược chiều nhau |
-| `no_win` | ngồi ↔ đứng: 202 so với 51 (f0–3); cúi → đứng: 40 so với 5 | Một vector cho cả 5 s làm mất diễn biến theo thời gian |
-| `sym_bias` | ngồi → ngã: 44 so với 13 (f0–3) | Không phân biệt trước/sau thì nhầm "hạ người từ từ" với "hạ người đột ngột" |
-| `wo_shape` | ngồi → đứng: 73 so với 28 (f0–1) | Hình dạng giúp đọc chiều chuyển động |
-| `wo_speed`, `shape_mean`, `wo_mdrop` | ngã → ngồi: 33–36 so với 16 (f0–1) | Ngã khác ngồi chủ yếu ở tốc độ |
+| `wo_order` | ngồi ↔ đứng: 291 so với 55; cúi ↔ đứng: 86 so với 28 | Mất thứ tự thì không phân biệt được hai động tác ngược chiều nhau |
+| `no_win` | ngồi ↔ đứng: 258 so với 55 | Một vector cho cả 5 s làm mất diễn biến theo thời gian |
+| `no_overlap` | ngồi ↔ đứng: 109 so với 55 | Khoảnh khắc thưa hơn làm mất chi tiết của chuyển tiếp |
+| `sym_bias` | ngã ↔ ngồi: 81 so với 37; ngồi ↔ đứng: 95 so với 55 | Không phân biệt trước/sau thì nhầm "hạ người từ từ" với "hạ người đột ngột" |
+| `shape_mean` | ngã ↔ ngồi: 115 so với 37 | Trung bình 168 kênh làm mất kiểu chuyển động đột ngột của ngã |
+| `wo_mdrop` | ngã ↔ ngồi: 81 so với 37; ngồi ↔ đứng: 94 so với 55 | Khối 3 không bị ép đọc nhánh tốc độ |
+| `wo_shape` | ngồi ↔ đứng: 105 so với 55; đi ↔ chạy: 253 so với 180 | Hình dạng giúp đọc chiều chuyển động |
+| `wo_speed` | đi ↔ chạy: 235 so với 180 | Tách đi với chạy dựa vào tốc độ |
+| `gate` | cúi ↔ đứng: 78 so với 28; ngã ↔ ngồi: 75 so với 37 | Cổng sập về nhánh tốc độ, mất phần lớn thông tin hình dạng (mục 5.6) |
 
 ### 5.5 Mô hình đã học gì
 
@@ -393,7 +394,7 @@ Vì vậy bài toán thực chất là phân biệt **bên trong** nhóm tại c
 - Ở cả 5 fold, quá khứ gần bị **hạ trọng số** (bias khoảng −0.5 đến −1.3), và mọi head đạt bias lớn nhất ở một offset **tương lai** từ 4 đến 10 khoảnh khắc. Với bước 0.16 s, khoảng này tương ứng 0.64–1.6 s sau.
 - Nói cách khác, mỗi khoảnh khắc "nhìn trước" pha tiếp theo của hành động. Bias đối xứng (`sym_bias`) không thể biểu diễn kiểu nhìn này, và việc nó kém 2.2 điểm xác nhận điều đó.
 
-**Khối 2 dựa vào nội dung, không dựa vào vị trí.** Bias học được của Khối 2 rất nhỏ: |b_sub| < 0.12 và |c_cross| < 0.05 ở mọi head. Attention RX × subcarrier vì thế gần như hoàn toàn do nội dung token quyết định (Q·K), không phải do khoảng cách subcarrier. Dù vậy, attention vẫn tốt hơn lấy trung bình 168 token (`shape_mean`, −2.7 đến −3.5 điểm).
+**Khối 2 dựa vào nội dung, không dựa vào vị trí.** Bias học được của Khối 2 rất nhỏ: |b_sub| < 0.12 và |c_cross| < 0.05 ở mọi head. Attention RX × subcarrier vì thế gần như hoàn toàn do nội dung token quyết định (Q·K), không phải do khoảng cách subcarrier. Dù vậy, attention vẫn tốt hơn lấy trung bình 168 token (`shape_mean`, −3.33 điểm, p < 1e-4).
 
 **Bất biến khi hoán vị RX được xác nhận.** Hoán vị vòng 3 RX lúc test cho dự đoán trùng 100 % ở cả 5 fold, và logit lệch nhau tối đa 2·10⁻⁵, chỉ là sai số số học.
 
@@ -491,8 +492,7 @@ Accuracy theo người dao động từ 83.8 đến 98.5 %. Độ dao động gi
 
 ## 6. Thảo luận và hạn chế
 
-- **Một seed.** Mỗi cấu hình mới train một lần. McNemar chỉ tính đến sự ngẫu nhiên của tập test, không tính đến sự ngẫu nhiên khi train. Các mức chênh lớn (`wo_order`, `no_win`, 6–8 điểm) là chắc chắn. Các mức chênh 1.4–2.7 điểm (`gate`, `sym_bias`, `wo_speed`, `shape_mean`) cần thêm seed của `full` để ước lượng độ dao động khi train. (bổ sung)
-- **Ablation chưa đủ fold.** `wo_mdrop` có 2/5 fold; `wo_speed`, `shape_mean`, `no_overlap` có 3/5 fold. (bổ sung)
+- **Một seed.** Mỗi cấu hình mới train một lần. McNemar chỉ tính đến sự ngẫu nhiên của tập test, không tính đến sự ngẫu nhiên khi train. Các mức chênh lớn (`wo_order`, `no_win`, 6–8 điểm) là chắc chắn. Các mức chênh 1.7–2.7 điểm (`no_overlap`, `wo_speed`, `wo_mdrop`, `sym_bias`, `gate`) cần thêm seed của `full` để ước lượng độ dao động khi train. (bổ sung)
 - **Chọn checkpoint theo val khá nhiễu.** Train accuracy đạt khoảng 100 % ở mọi run, và epoch tốt nhất dao động từ 19 đến 71. Tập val chỉ gồm 2 người, nên checkpoint được chọn phụ thuộc nhiều vào hai người đó.
 - **Một phòng.** Mọi kết quả là trên `room_02`. Có thể đánh giá chuyển phòng mà không cần train lại: chạy mô hình trên `room_01`, chỉ dùng 4 người mới (5–8) để vừa khác phòng vừa khác người. (bổ sung)
 - **Đi ↔ chạy với người chạy chậm** là giới hạn chính. Muốn cải thiện có lẽ cần manh mối khác ngoài tốc độ (nhịp bước) hoặc thích nghi theo người, không phải phổ mịn hơn: `no_win`, với phổ mịn gấp 15 lần, không cải thiện được lớp chạy.
@@ -505,9 +505,10 @@ Accuracy theo người dao động từ 83.8 đến 98.5 %. Độ dao động gi
 WiFormer v5 mô hình hóa một hoạt động như một chuỗi khoảnh khắc ngắn. Trong mỗi khoảnh khắc, mô hình tách thông tin riêng của từng kênh (hình dạng, gộp có chọn lọc bằng attention RX × subcarrier, bất biến khi hoán vị RX) khỏi thông tin chung của mọi kênh (tốc độ, từ phổ Hann trung bình). Hai nguồn được gộp tuyến tính với modality dropout, rồi đọc theo thứ tự bằng Transformer thời gian với bias có dấu.
 
 Trên SSHAR-ESP với đánh giá chéo người 5 fold, mô hình đạt **92.90 %** accuracy 6 hành động. Mọi thành phần đều có đóng góp có ý nghĩa thống kê, và mỗi thành phần sửa đúng nhóm lỗi nó nhắm tới:
-- cấu trúc thời gian cho ngồi ↔ đứng;
-- tốc độ cho ngã ↔ ngồi và đi ↔ chạy;
-- hình dạng cho chiều của chuyển động.
+- cấu trúc thời gian (thứ tự, chia khoảnh khắc, overlap) cho ngồi ↔ đứng;
+- attention RX × subcarrier của Khối 2 cho ngã ↔ ngồi;
+- nhánh tốc độ cho đi ↔ chạy;
+- nhánh hình dạng là nền tảng chung cho cả hai nhóm.
 
 Phân tích cũng chỉ ra hai điều:
 - gộp bằng cổng vô hướng sập về nhánh nhỏ khi dùng cùng modality dropout;
