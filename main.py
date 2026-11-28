@@ -393,6 +393,11 @@ def parse_args():
     )
     parser.add_argument("--seed", type=int, default=SEED,
                         help=f"Global random seed (default {SEED})")
+    parser.add_argument("--ut_har_norm", type=str, default="minmax_sample",
+                        choices=["minmax_sample", "minmax_train"],
+                        help="UT_HAR input scaling of the loader: minmax_sample = per-sample min-max "
+                             "(default); minmax_train = one global min / max of the TRAIN split applied "
+                             "to every split (same input as AMCS-TCN 'minmax')")
 
     parser.add_argument(
             "--case_split",
@@ -521,6 +526,8 @@ def main():
     dataset_kwargs = {}
     dataset_kwargs["case_split"] = args.case_split
     dataset_kwargs["split_mode"] = args.split_mode
+    if args.dataset == "ut_har" and args.ut_har_norm == "minmax_train":
+        dataset_kwargs["norm_type"] = "minmax_train"
     if args.model in ("wiformer_v4", "wiformer_v5") and args.dataset.startswith("sshar") and args.norm == "sub":
         # WiFormer v4 normalises every sample itself (mean per (rx, sub), std per rx),
         # which cancels any global z-score -> skip the dataset's mean/std pass.

@@ -134,6 +134,8 @@ VARIANTS   = ['wo_mdrop', 'wo_speed', 'shape_mean']   # session B; mỗi account
 SEEDS      = [42]            # mỗi biến thể chạy 1 lần / seed; seed 42 giữ tên thư mục cũ, seed khác thêm _s<seed>
                              # UT_HAR (so với AMCS-TCN, 5 seed): DATASET = 'ut_har', VARIANTS = ['full'],
                              #   SEEDS = [42, 3407, 1024, 2024, 0]  (~45 phút / seed)
+                             #   VARIANTS = ['nonorm']: đầu vào = min-max toàn cục theo tập train (giống
+                             #   AMCS-TCN 'minmax'), mô hình không chuẩn hoá theo mẫu (giữ mức biên độ)
 EXTRA      = ''              # xem "CÁC TUỲ CHỌN"; mặc định 100 epoch; vd '--epochs=2' để chạy thử
 RUN_TAG    = 'ablation_v5'
 PREV_RESULTS = ''            # vd '/kaggle/input/<output-phien-truoc>/results/ablation_v4'

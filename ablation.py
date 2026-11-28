@@ -178,6 +178,10 @@ V5_VARIANTS = {
                    ["--v5_ablation=full", "--stride=64"]),
     "no_win": ("Window", "One moment = the whole sequence (W = T = 1000, K = 1)",
                ["--v5_ablation=full", "--window=1000"]),
+    # UT_HAR only: same input as AMCS-TCN 'minmax' (global train min / max), no normalisation
+    # inside the model -> the static level of every channel is kept
+    "nonorm": ("Norm", "UT_HAR: input = global train min-max (as AMCS-TCN), no per-sample norm in the model",
+               ["--v5_ablation=full", "--norm=none", "--ut_har_norm=minmax_train"]),
 }
 V5_SETS = {
     "A": ["full", "gate", "wo_shape"],

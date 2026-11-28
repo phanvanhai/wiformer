@@ -225,11 +225,15 @@ class UTHARDataset(Dataset):
     normalize
 
     norm_type
-        minmax
+        minmax        per sample: (x - min(x)) / (max(x) - min(x))  (default)
+        minmax_train  global: (x - min_train) / (max_train - min_train), one min / max over
+                      the whole TRAIN split, applied to every split (as AMCS-TCN 'minmax')
         zscore
 
     mean,std
         only used for zscore
+    data_min,data_max
+        only used for minmax_train
     """
 
     def __init__(
@@ -240,6 +244,8 @@ class UTHARDataset(Dataset):
         norm_type="minmax",
         mean=None,
         std=None,
+        data_min=None,
+        data_max=None,
     ):
 
         self.root_dir = Path(root_dir)
@@ -248,6 +254,8 @@ class UTHARDataset(Dataset):
         self.norm_type = norm_type
         self.mean = mean
         self.std = std
+        self.data_min = data_min
+        self.data_max = data_max
 
         self.X = None
         self.y = None
@@ -319,6 +327,10 @@ class UTHARDataset(Dataset):
                 ) / (
                     xmax - xmin + 1e-8
                 )
+            elif self.norm_type == "minmax_train":
+                if self.data_min is None or self.data_max is None:
+                    raise ValueError("data_min / data_max (train split) required for minmax_train")
+                x = (x - self.data_min) / (self.data_max - self.data_min)
             elif self.norm_type == "zscore":
                 if self.mean is None or self.std is None:
                     raise ValueError(
@@ -1130,11 +1142,16 @@ def load_dataset(
         if norm_type is None:
             norm_type = "minmax"
 
-        mean = std = None
+        mean = std = data_min = data_max = None
         if normalize and norm_type == "zscore":
             mean, std = compute_ut_har_mean_std(
                 root_dir
             )
+        if normalize and norm_type == "minmax_train":
+            # one global min / max over the TRAIN split (as AMCS-TCN 'minmax')
+            x_train = UTHARDataset(root_dir=root_dir, split="train", normalize=False).X
+            data_min, data_max = float(x_train.min()), float(x_train.max())
+            print(f"UT_HAR minmax_train: min / max of the train split = {data_min:.6f} / {data_max:.6f}")
 
         def make(split):
             return UTHARDataset(
@@ -1144,6 +1161,8 @@ def load_dataset(
                 norm_type=norm_type,
                 mean=mean,
                 std=std,
+                data_min=data_min,
+                data_max=data_max,
             )
 
     # =======================================================
