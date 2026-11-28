@@ -391,6 +391,8 @@ def parse_args():
         help="Full name of the result folder under --result_root (overrides the "
              "<dataset>_<model>[_<run_name>] naming)",
     )
+    parser.add_argument("--seed", type=int, default=SEED,
+                        help=f"Global random seed (default {SEED})")
 
     parser.add_argument(
             "--case_split",
@@ -495,7 +497,8 @@ def main():
     # --------------------------------------------------------
     # Reproducibility
     # --------------------------------------------------------
-    set_seed(SEED)
+    set_seed(args.seed)
+    print(f"Seed = {args.seed}")
     # --------------------------------------------------------
     # Device
     # --------------------------------------------------------

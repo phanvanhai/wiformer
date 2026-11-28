@@ -196,6 +196,14 @@ def tables(model):
         return V5_VARIANTS, V5_SETS
     return VARIANTS, SETS
 
+DEFAULT_SEED = 42      # = main.SEED; runs with this seed keep the folder name without suffix
+
+
+def run_name(name, seed):
+    """Variant name used in the folder: <variant> for the default seed, <variant>_s<seed> otherwise."""
+    return name if seed == DEFAULT_SEED else f"{name}_s{seed}"
+
+
 METRIC_KEYS = [
     "accuracy", "f1_macro", "precision_macro", "recall_macro",
     "best_epoch", "epochs_trained", "total_params", "flops_per_sample", "training_time",
@@ -225,6 +233,9 @@ def parse_args():
                    choices=["repeat", "user", "position"],
                    help="all 6:2:2; default repeat; ignored for ut_har")
     p.add_argument("--case_split", type=int, default=0, help="case for --split_mode user / position")
+    p.add_argument("--seeds", type=int, nargs="+", default=[DEFAULT_SEED],
+                   help=f"Run every variant once per seed (default {DEFAULT_SEED}). Seed {DEFAULT_SEED} keeps "
+                        f"the plain folder name, other seeds add _s<seed> (e.g. ut_har_official_full_s3407)")
     p.add_argument("--extra", nargs=argparse.REMAINDER, default=[],
                    help="Everything after --extra is passed to main.py (e.g. --epochs=50)")
     return p.parse_args()
@@ -256,7 +267,7 @@ def is_done(path):
         return "accuracy" in json.load(fh)
 
 
-def run_variant(args, name):
+def run_variant(args, name, seed=DEFAULT_SEED):
     variants, _ = tables(args.model)
     cmd = [
         sys.executable, "-u", "main.py",      # -u: unbuffered, log appears line by line
@@ -264,14 +275,15 @@ def run_variant(args, name):
         f"--dataset={args.dataset}",
         f"--model={args.model}",
         f"--result_root={args.result_root}",
-        f"--run_dir={folder_name(args, name)}",
+        f"--run_dir={folder_name(args, run_name(name, seed))}",
         f"--split_mode={args.split_mode}",
         f"--case_split={args.case_split}",
+        f"--seed={seed}",
         *variants[name][2],
         *args.extra,          # last -> overrides the defaults above
     ]
     print("\n" + "#" * 70)
-    print(f"# [{name}] {variants[name][1]}")
+    print(f"# [{run_name(name, seed)}] {variants[name][1]} (seed {seed})")
     print("# " + " ".join(cmd))
     print("#" * 70, flush=True)
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
@@ -283,36 +295,40 @@ def summarize(args, names, tag):
     result_root, dataset, model = args.result_root, args.dataset, args.model
     rows = []
     # delta_acc is measured against "full" if it is in the list, else the first name
+    # (mean over the seeds of that reference)
     ref = "full" if "full" in names else names[0]
-    full_acc = None
+    ref_accs = []
     for name in names:
-        d = run_dir(args, name)
-        f = os.path.join(d, "metrics.json")
-        if not os.path.isfile(f):
-            continue
-        with open(f, encoding="utf-8") as fh:
-            m = json.load(fh)
-        if "accuracy" not in m:
-            continue
-        group, desc, _ = variants[name]
-        row = {"variant": name, "group": group, "description": desc, "folder": os.path.basename(d)}
-        row.update({k: m.get(k) for k in METRIC_KEYS})
-        # train / val accuracy of the best checkpoint (summary_splits.csv, newer runs only)
-        s = os.path.join(d, "summary_splits.csv")
-        if os.path.isfile(s):
-            with open(s, encoding="utf-8") as fh:
-                for r in csv.DictReader(fh):
-                    if r["split"] in ("train", "val"):
-                        row[f"{r['split']}_acc"] = float(r["accuracy"])
-                        row[f"{r['split']}_f1"] = float(r["f1_macro"])
-        rows.append(row)
-        if name == ref:
-            full_acc = m["accuracy"]
+        for seed in args.seeds:
+            d = run_dir(args, run_name(name, seed))
+            f = os.path.join(d, "metrics.json")
+            if not os.path.isfile(f):
+                continue
+            with open(f, encoding="utf-8") as fh:
+                m = json.load(fh)
+            if "accuracy" not in m:
+                continue
+            group, desc, _ = variants[name]
+            row = {"variant": name, "seed": seed, "group": group, "description": desc,
+                   "folder": os.path.basename(d)}
+            row.update({k: m.get(k) for k in METRIC_KEYS})
+            # train / val accuracy of the best checkpoint (summary_splits.csv, newer runs only)
+            s = os.path.join(d, "summary_splits.csv")
+            if os.path.isfile(s):
+                with open(s, encoding="utf-8") as fh:
+                    for r in csv.DictReader(fh):
+                        if r["split"] in ("train", "val"):
+                            row[f"{r['split']}_acc"] = float(r["accuracy"])
+                            row[f"{r['split']}_f1"] = float(r["f1_macro"])
+            rows.append(row)
+            if name == ref:
+                ref_accs.append(m["accuracy"])
 
     if not rows:
         print("No finished runs found.")
         return
 
+    full_acc = sum(ref_accs) / len(ref_accs) if ref_accs else None
     for r in rows:
         r["delta_acc"] = None if full_acc is None else r["accuracy"] - full_acc
 
@@ -321,7 +337,7 @@ def summarize(args, names, tag):
     else:
         out = os.path.join(result_root, f"ablation_{model}_{dataset}_{split_label(args)}_{tag}.csv")
     os.makedirs(result_root, exist_ok=True)
-    fields = ["variant", "group", "description", "folder", *METRIC_KEYS,
+    fields = ["variant", "seed", "group", "description", "folder", *METRIC_KEYS,
               "train_acc", "train_f1", "val_acc", "val_f1", "delta_acc"]
     with open(out, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=fields, restval="")
@@ -329,13 +345,25 @@ def summarize(args, names, tag):
         w.writerows(rows)
 
     print(f"\nAblation summary - {dataset} ({tag})")
-    print(f"{'variant':<14}{'group':<9}{'acc':>8}{'d_acc':>8}{'F1':>8}{'params':>10}  description")
+    print(f"{'variant':<14}{'seed':>6}{'group':>9}{'acc':>8}{'d_acc':>8}{'F1':>8}{'params':>10}  description")
     for r in rows:
         d = "" if r["delta_acc"] is None else f"{100 * r['delta_acc']:+.2f}"
         print(
-            f"{r['variant']:<14}{r['group']:<9}{100 * r['accuracy']:>8.2f}{d:>8}"
+            f"{r['variant']:<14}{r['seed']:>6}{r['group']:>9}{100 * r['accuracy']:>8.2f}{d:>8}"
             f"{100 * r['f1_macro']:>8.2f}{r['total_params'] or 0:>10}  {r['description']}"
         )
+    if len(args.seeds) > 1:
+        # mean +- std over the seeds (std with ddof=0, as the AMCS-TCN multi-seed summary)
+        print("\nMean over seeds (std ddof=0)")
+        for name in names:
+            rs = [r for r in rows if r["variant"] == name]
+            if not rs:
+                continue
+            for key in ("accuracy", "f1_macro"):
+                v = [100 * r[key] for r in rs]
+                mu = sum(v) / len(v)
+                sd = (sum((x - mu) ** 2 for x in v) / len(v)) ** 0.5
+                print(f"  {name:<14}{key:<10} {mu:6.2f} +- {sd:5.2f}  (seeds {[r['seed'] for r in rs]})")
     print(f"\nSaved: {out}")
 
 
@@ -377,11 +405,13 @@ def main():
             sys.exit("--data_root is required")
         failed = []
         for name in names:
-            if args.skip_done and is_done(run_dir(args, name)):
-                print(f"[skip] {name} already done")
-                continue
-            if run_variant(args, name) != 0:
-                failed.append(name)
+            for seed in args.seeds:
+                rn = run_name(name, seed)
+                if args.skip_done and is_done(run_dir(args, rn)):
+                    print(f"[skip] {rn} already done")
+                    continue
+                if run_variant(args, name, seed) != 0:
+                    failed.append(rn)
         if failed:
             print(f"\nFailed variants: {failed}")
 

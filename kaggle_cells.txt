@@ -131,6 +131,9 @@ DATASET    = 'sshar_esp'     # sshar_esp | ut_har
 SPLIT_MODE = 'user'          # repeat | user | position (đều 6:2:2) ; ut_har: bỏ qua
 CASE       = 0               # user: fold 0..4 / position: 0..3
 VARIANTS   = ['wo_mdrop', 'wo_speed', 'shape_mean']   # session B; mỗi account 1 CASE (0..4); xem "CÁC TUỲ CHỌN"
+SEEDS      = [42]            # mỗi biến thể chạy 1 lần / seed; seed 42 giữ tên thư mục cũ, seed khác thêm _s<seed>
+                             # UT_HAR (so với AMCS-TCN, 5 seed): DATASET = 'ut_har', VARIANTS = ['full'],
+                             #   SEEDS = [42, 3407, 1024, 2024, 0]  (~45 phút / seed)
 EXTRA      = ''              # xem "CÁC TUỲ CHỌN"; mặc định 100 epoch; vd '--epochs=2' để chạy thử
 RUN_TAG    = 'ablation_v5'
 PREV_RESULTS = ''            # vd '/kaggle/input/<output-phien-truoc>/results/ablation_v4'
@@ -167,6 +170,7 @@ t0 = time.time()
 run(['python', '-u', 'ablation.py', f'--model={MODEL}', f'--data_root={DATA_ROOT}',
      f'--dataset={DATASET}', f'--result_root={RESULT_BASE}', '--skip_done',
      f'--split_mode={SPLIT_MODE}', f'--case_split={CASE}',
+     '--seeds', *map(str, SEEDS),
      '--variants', *VARIANTS, '--extra', *shlex.split(EXTRA)])
 print(f'\nTotal time: {(time.time() - t0) / 3600:.2f} h')
 
