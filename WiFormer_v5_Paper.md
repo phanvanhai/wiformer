@@ -252,16 +252,49 @@ Mỗi biến thể đổi **một** điểm so với `full`:
 
 Macro-F1 7 lớp: **93.81 %**.
 
-**So sánh với baseline** theo cùng giao thức (7 lớp, chéo người 5 fold, thước đo 6 hành động):
+**So sánh với baseline** theo cùng giao thức: 7 lớp, chéo người 5 fold, 100 epoch không dừng sớm, chọn checkpoint theo val, seed 42. Accuracy và macro-F1 ở bảng này là trung bình ± độ lệch chuẩn qua 5 fold. Vì vậy macro-F1 của WiFormer là 93.79, khác một chút với 93.81 ở trên (F1 tính gộp mẫu của 5 fold). p là McNemar gộp 4800 mẫu hành động so với WiFormer v5.
 
-| Mô hình | 6 hành động | Macro-F1 7 lớp | Params | MACs |
-|---|---|---|---|---|
-| WiFormer v5 | 92.90 ± 1.78 | 93.81 | 453K | 2.38 G |
-| AMCS-TCN | (bổ sung) | (bổ sung) | | |
-| CNN-GRU | (bổ sung) | (bổ sung) | | |
-| BiMamba | (bổ sung) | (bổ sung) | | |
+| Mô hình | Chuẩn hoá đầu vào | 6 hành động | 7 lớp | Macro-F1 7 lớp | Chỉ baseline đúng / chỉ WiFormer đúng | p | Params | MACs |
+|---|---|---|---|---|---|---|---|---|
+| **WiFormer v5** | của WiFormer (theo mẫu, trong mô hình) | **92.90 ± 1.78** | **94.66 ± 1.30** | **93.79 ± 1.59** | | | 453K | 2.38 G |
+| AMCS-TCN | `zscore_rx` (= chuẩn hoá của WiFormer) | 73.83 ± 5.49 | 80.27 ± 4.23 | 77.23 ± 4.93 | 133 / 1048 | 8.4e-177 | 1.42 M | (bổ sung) |
+| AMCS-TCN | z-score theo từng (RX, subcarrier) | 70.27 ± 2.34 | 77.50 ± 1.85 | 74.12 ± 2.15 | 119 / 1205 | 1.5e-226 | 1.42 M | |
+| AMCS-TCN | min-max toàn cục (thống kê tập train) | 52.67 ± 5.52 | 58.41 ± 8.61 | 55.13 ± 7.34 | 97 / 2028 | ≈ 0 | 1.42 M | |
+| CNN-GRU | | (bổ sung) | | (bổ sung) | | | | |
+| BiMamba | | (bổ sung) | | (bổ sung) | | | | |
 
-Protocol cho các baseline đã được viết trong `amsc-tcn/code/docs/SSHAR_ESP_protocol_v5.md`.
+Accuracy 6 hành động theo fold (F0 – F4):
+
+| Mô hình | F0 | F1 | F2 | F3 | F4 |
+|---|---|---|---|---|---|
+| WiFormer v5 | 91.67 | 91.15 | 92.81 | 93.12 | 95.73 |
+| AMCS-TCN `zscore_rx` | 70.31 | 72.92 | 76.77 | 81.56 | 67.60 |
+| Chênh lệch | +21.4 | +18.2 | +16.0 | +11.6 | +28.1 |
+
+**Nhận xét:**
+
+- **Cùng chuẩn hoá, chỉ khác kiến trúc**, WiFormer v5 hơn AMCS-TCN **19.1 điểm** và thắng ở cả 5 fold. Lợi thế của WiFormer vì vậy không đến từ cách chuẩn hoá.
+- **Khoảng cách lớn nhất nằm ở các hành động tại chỗ.** Recall AMCS-TCN `zscore_rx` → WiFormer:
+
+  | Lớp | AMCS-TCN `zscore_rx` | WiFormer v5 |
+  |---|---|---|
+  | ngồi xuống | 63.7 | 91.6 |
+  | đứng lên | 61.0 | 95.1 |
+  | cúi nhặt | 80.8 | 98.6 |
+  | ngã | 84.0 | 97.6 |
+  | đi | 82.4 | 98.2 |
+  | chạy | 71.1 | 76.1 |
+  | tĩnh | 99.6 | 99.9 |
+
+  Lớp chạy chỉ tăng 5 điểm. Với người 10, cả hai mô hình đều chỉ nhận đúng 8.8 % mẫu chạy (73/80 mẫu bị đoán thành đi), và 71 % số mẫu chạy mà WiFormer sai thì AMCS-TCN cũng sai. Đây là bằng chứng độc lập, từ một kiến trúc khác hẳn, rằng lỗi chạy → đi đến từ dữ liệu (mục 5.7).
+- **Chuẩn hoá ảnh hưởng mạnh tới AMCS-TCN trong giao thức chéo người.**
+  - Min-max giữ mức biên độ tuyệt đối, là "dấu vân tay" của người và vị trí, nên không tổng quát sang người mới: 52.67 %.
+  - Hai cách z-score theo mẫu bỏ mức này và tăng lên 70–74 %.
+  - Chia **một** độ lệch chuẩn cho mỗi RX (`zscore_rx`) tốt hơn chia riêng cho từng subcarrier: +3.6 điểm, McNemar p ≈ 5e-7. Giữ độ mạnh tương đối giữa các subcarrier có ích cho cả hai kiến trúc.
+- **Kích thước:** WiFormer v5 có ít tham số hơn AMCS-TCN khoảng 3 lần (453K so với 1.42 M). MACs của AMCS-TCN chưa đo bằng cùng công cụ. (bổ sung)
+- **Cài đặt riêng của AMCS-TCN** được giữ như code gốc: Adam lr 1e-3, StepLR(20, 0.5), nhiễu Gaussian 0.02 khi train. Batch 32 theo giao thức chung. Repo gốc không công bố bước chuẩn hoá, nên cả ba cách chuẩn hoá ở bảng trên đều do nhóm tác giả chọn.
+
+Protocol cho các baseline: `amsc-tcn/code/docs/SSHAR_ESP_protocol_v5.md`. Chi tiết tái lập AMCS-TCN: `amsc-tcn/code/docs/AMCS_TCN_report.md`.
 
 ### 5.2 Ablation
 
@@ -489,6 +522,33 @@ Bảng dưới là kết quả `full`; mỗi người có 480 mẫu hành độn
 | 10 | 1 | 83.8 | 5 | 73 | 0 |
 
 Accuracy theo người dao động từ 83.8 đến 98.5 %. Độ dao động giữa các fold (độ lệch chuẩn 1.8 điểm) chủ yếu đến từ ba người chạy chậm và từ lỗi tại chỗ của các người 9, 13, 14, 4.
+
+### 5.9 UT-HAR (kết quả sơ bộ)
+
+UT-HAR dùng split có sẵn của SenseFi, chia ngẫu nhiên theo mẫu, nên cùng người và cùng bản ghi có thể nằm ở cả train và test. Bảng này vì vậy **không** đo khả năng tổng quát sang người mới. Mục đích chỉ là đối chiếu với các bài báo khác trên benchmark chuẩn.
+
+| Mô hình | Chuẩn hoá | Seed | Accuracy | Macro-F1 |
+|---|---|---|---|---|
+| AMCS-TCN (bài gốc, dataset riêng 10 lớp) | không nêu | 1 lần | 98.72 | 98.76 |
+| AMCS-TCN (chạy lại) | min-max toàn cục | 5 seed | 97.36 ± 0.34 | 95.88 ± 0.41 |
+| WiFormer v5 | của WiFormer | 42 | 71.80 | 60.11 |
+| WiFormer v5 | của WiFormer | 4 seed còn lại | (bổ sung) | (bổ sung) |
+| AMCS-TCN | `zscore_rx` (= của WiFormer) | 5 seed | (bổ sung) | (bổ sung) |
+| WiFormer v5 | `--norm=none` (giữ mức biên độ) | 5 seed | (bổ sung) | (bổ sung) |
+
+**Kết quả seed 42 của WiFormer v5:**
+- Train 98.8 %, val 77.0 %, test 71.8 %: mô hình overfit nặng.
+- Mô hình nhầm nhiều giữa nằm xuống, cúi nhặt, ngồi xuống và đứng lên. Đứng lên chỉ đúng 10/31 mẫu.
+- Các lớp có chuyển động rõ vẫn tốt: đi 143/147, chạy 100/121.
+
+**Giả thuyết (chưa kiểm chứng):** chuẩn hoá theo mẫu của WiFormer xoá mức biên độ tĩnh của từng kênh.
+- Mỗi mẫu UT-HAR là một đoạn 2 s cắt từ bản ghi liên tục. Với nằm, ngồi, đứng, nhiều đoạn có thể chỉ chứa tư thế tĩnh trước hoặc sau động tác, và khi đó mức biên độ là manh mối chính.
+- Với split ngẫu nhiên, mức biên độ này giống nhau giữa train và test vì cùng người, cùng bản ghi.
+- Min-max của AMCS-TCN giữ lại mức này, còn WiFormer thì không.
+
+Trên SSHAR-ESP (chéo người), lối tắt này không giúp được: AMCS-TCN với min-max chỉ đạt 52.67 %.
+
+Hai thí nghiệm kiểm chứng là AMCS-TCN `zscore_rx` trên UT-HAR và WiFormer v5 `--norm=none` trên UT-HAR, sẽ bổ sung vào bảng trên.
 
 ## 6. Thảo luận và hạn chế
 
