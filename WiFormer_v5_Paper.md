@@ -257,7 +257,7 @@ Macro-F1 7 lớp: **93.81 %**.
 | Mô hình | Chuẩn hoá đầu vào | 6 hành động | 7 lớp | Macro-F1 7 lớp | Chỉ baseline đúng / chỉ WiFormer đúng | p | Params | MACs |
 |---|---|---|---|---|---|---|---|---|
 | **WiFormer v5** | của WiFormer (theo mẫu, trong mô hình) | **92.90 ± 1.78** | **94.66 ± 1.30** | **93.79 ± 1.59** | | | 453K | 2.38 G |
-| AMCS-TCN | `zscore_rx` (= chuẩn hoá của WiFormer) | 73.83 ± 5.49 | 80.27 ± 4.23 | 77.23 ± 4.93 | 133 / 1048 | 8.4e-177 | 1.42 M | (bổ sung) |
+| AMCS-TCN | `zscore_rx` (= chuẩn hoá của WiFormer) | 73.83 ± 5.49 | 80.27 ± 4.23 | 77.23 ± 4.93 | 133 / 1048 | 8.4e-177 | 1.42 M | 0.50 G |
 | AMCS-TCN | z-score theo từng (RX, subcarrier) | 70.27 ± 2.34 | 77.50 ± 1.85 | 74.12 ± 2.15 | 119 / 1205 | 1.5e-226 | 1.42 M | |
 | AMCS-TCN | min-max toàn cục (thống kê tập train) | 52.67 ± 5.52 | 58.41 ± 8.61 | 55.13 ± 7.34 | 97 / 2028 | ≈ 0 | 1.42 M | |
 | CNN-GRU | | (bổ sung) | | (bổ sung) | | | | |
@@ -291,7 +291,17 @@ Accuracy 6 hành động theo fold (F0 – F4):
   - Min-max giữ mức biên độ tuyệt đối, là "dấu vân tay" của người và vị trí, nên không tổng quát sang người mới: 52.67 %.
   - Hai cách z-score theo mẫu bỏ mức này và tăng lên 70–74 %.
   - Chia **một** độ lệch chuẩn cho mỗi RX (`zscore_rx`) tốt hơn chia riêng cho từng subcarrier: +3.6 điểm, McNemar p ≈ 5e-7. Giữ độ mạnh tương đối giữa các subcarrier có ích cho cả hai kiến trúc.
-- **Kích thước:** WiFormer v5 có ít tham số hơn AMCS-TCN khoảng 3 lần (453K so với 1.42 M). MACs của AMCS-TCN chưa đo bằng cùng công cụ. (bổ sung)
+- **Kích thước và chi phí:** đo bằng cùng công cụ (`thop`, một mẫu, inference).
+
+  | | Params | MACs / mẫu | Độ trễ CPU / mẫu |
+  |---|---|---|---|
+  | WiFormer v5 | 453K | 2.38 G | ~250 ms |
+  | AMCS-TCN (FC) | 1.42 M | 0.50 G | ~286 ms |
+
+  - WiFormer ít tham số hơn khoảng 3 lần nhưng nhiều MACs hơn khoảng 4.8 lần. MACs của WiFormer chủ yếu nằm ở Conv của nhánh hình dạng, chạy trên từng (RX, subcarrier, khoảnh khắc). Phần lớn tham số của AMCS-TCN nằm ở đầu FC (64 × ⌊T/16⌋ → 256).
+  - `thop` không đếm FFT và phép nhân ma trận bên trong attention, nên MACs thực của WiFormer cao hơn con số này một chút.
+  - Độ trễ đo trên CPU laptop, batch 1, chỉ để tham khảo: hai mô hình có độ trễ tương đương.
+  - Trên UT-HAR (T = 250): WiFormer 452K tham số, 0.38 G MACs; AMCS-TCN 487K tham số, 0.07 G MACs.
 - **Cài đặt riêng của AMCS-TCN** được giữ như code gốc: Adam lr 1e-3, StepLR(20, 0.5), nhiễu Gaussian 0.02 khi train. Batch 32 theo giao thức chung. Repo gốc không công bố bước chuẩn hoá, nên cả ba cách chuẩn hoá ở bảng trên đều do nhóm tác giả chọn.
 
 Protocol cho các baseline: `amsc-tcn/code/docs/SSHAR_ESP_protocol_v5.md`. Chi tiết tái lập AMCS-TCN: `amsc-tcn/code/docs/AMCS_TCN_report.md`.
